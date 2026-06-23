@@ -2452,7 +2452,7 @@ async function fileToBase64(file){return new Promise((res,rej)=>{const r=new Fil
 async function extractTextFromPDF(base64){try{if(typeof pdfjsLib==='undefined')return null;const pdf=await pdfjsLib.getDocument({data:atob(base64)}).promise;let text='';for(let i=1;i<=Math.min(pdf.numPages,3);i++){const page=await pdf.getPage(i);const content=await page.getTextContent();text+=content.items.map(s=>s.str).join(' ')+'\n';}return text;}catch(e){return null;}}
 async function parsePDFWithClaude(text,tipo){
   if(!text)return null;
-  const GEMINI_KEY='AQ.Ab8RN6KRq9V8hYgZfw0qxs2w4NZOtIOd8lKeetjIHdX0Za5kmA';
+  const GEMINI_KEY='AQ.Ab8RN6L11axkk-zIfzNGUOaWz1mXDt7n7dOpiZ4F67cDCO6UJw';
   const prompt = tipo==='remito'
     ? 'Del siguiente texto de un remito de agroquímicos, extrae: numero_remito, fecha (YYYY-MM-DD), proveedor, lista de items con nombre, cantidad, unidad, precio_unitario. Respondé SOLO JSON válido, sin markdown ni texto adicional.'
     : 'Extraé los datos de esta carta de porte electrónica argentina. Respondé SOLO JSON válido con: num, ctg, fecha (YYYY-MM-DD), titular, campania, grano, proced, destino, transp, chofer, pb (peso bruto kg), pt (peso tara kg), pn (peso neto kg), km, tarifa.';
@@ -2588,7 +2588,7 @@ async function handleCPEPdfFiles(files){
     try{
       // Convertir PDF a base64 y enviarlo directamente a Gemini como documento
       const base64=await fileToBase64(f);
-      const GEMINI_KEY='AQ.Ab8RN6KRq9V8hYgZfw0qxs2w4NZOtIOd8lKeetjIHdX0Za5kmA';
+      const GEMINI_KEY='AQ.Ab8RN6L11axkk-zIfzNGUOaWz1mXDt7n7dOpiZ4F67cDCO6UJw';
       const prompt=`Sos un asistente que extrae datos de Cartas de Porte Electrónicas (CPE) argentinas.
 Extraé EXACTAMENTE estos campos del documento y respondé SOLO con JSON válido, sin markdown:
 - num: N° CPE (formato 00000-00000000)
@@ -2758,6 +2758,25 @@ async function postLoginInit(){
   fbListen();
 }
 
+function openMoCPEPrefilled(data){
+  openMoCPE();
+  if(data.num)document.getElementById('cpe-num').value=data.num;
+  if(data.ctg)document.getElementById('cpe-ctg').value=data.ctg;
+  if(data.fecha)document.getElementById('cpe-fecha').value=data.fecha;
+  if(data.titular)document.getElementById('cpe-titular').value=data.titular;
+  if(data.campania)document.getElementById('cpe-campania').value=data.campania;
+  if(data.transp)document.getElementById('cpe-transp').value=data.transp;
+  if(data.chofer)document.getElementById('cpe-chofer').value=data.chofer;
+  if(data.grano)document.getElementById('cpe-grano').value=data.grano;
+  if(data.proced)document.getElementById('cpe-proced').value=data.proced;
+  if(data.destino)document.getElementById('cpe-destino').value=data.destino;
+  if(data.pb)document.getElementById('cpe-pb').value=data.pb;
+  if(data.pt)document.getElementById('cpe-pt').value=data.pt;
+  if(data.km)document.getElementById('cpe-km').value=data.km;
+  if(data.tarifa)document.getElementById('cpe-tarifa').value=data.tarifa;
+  recalcCPE();
+}
+
 // ── LOGO DEL ESTABLECIMIENTO ──
 function abrirConfigLogo(){
   const logo=fbGet('logo',null);
@@ -2875,7 +2894,7 @@ Object.assign(window, {
   cambiarCampaña, crearCampaña,
   switchGranosTab, switchStockGranosTab, renderStockGranos, renderMovGranos, exportStockGranosCSV, exportMovGranosCSV,
   switchVentaTab, openMoCPE, recalcCPE, guardarCPE, setKgDesc, confirmarCPE, renderCPETable, delCPE, exportCPECSV,
-  handleCPEPdfDrop, handleCPEPdfFiles, parseCPEAfip,
+  handleCPEPdfDrop, handleCPEPdfFiles, parseCPEAfip, openMoCPEPrefilled,
   renderFletes, exportFletesCSV,
   switchTicketTab, openMoTicketGrano, onTkgCampoChange, onTkgLoteChange, recalcTKG, guardarTicketGrano, delTicket,
   setResumenKgMode, renderResumenKg,
