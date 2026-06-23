@@ -1861,20 +1861,37 @@ function cancelarLabor(){
 function onLoteChange(){
   const idx=document.getElementById('lf-lote').value;
   if(idx===''){['lf-campo','lf-sector','lf-cultivo','lf-ha-lote','lf-ha-aplic'].forEach(id=>document.getElementById(id).value='');}
-  else{const l=st.lotes[idx];document.getElementById('lf-campo').value=l.campo||'—';document.getElementById('lf-sector').value=l.sector?'Sector '+l.sector:'—';document.getElementById('lf-cultivo').value=lCu(l)||'Sin asignar';const ha=l.ha;document.getElementById('lf-ha-lote').value=ha?parseFloat(ha).toFixed(1):'';document.getElementById('lf-ha-aplic').value=ha?parseFloat(ha).toFixed(1):'';}
+  else{
+    const l=st.lotes[idx];
+    document.getElementById('lf-campo').value=l.campo||'—';
+    document.getElementById('lf-sector').value=l.sector?'Sector '+l.sector:'—';
+    document.getElementById('lf-cultivo').value=lCu(l)||'Sin asignar';
+    const ha=l.ha;
+    document.getElementById('lf-ha-lote').value=ha?parseFloat(ha).toFixed(1):'';
+    document.getElementById('lf-ha-aplic').value=ha?parseFloat(ha).toFixed(1):'';
+    // Depósito automático según sector
+    const dep=String(l.sector)==='2'?'B':'A';
+    document.querySelectorAll('#ins-rows tr .ds').forEach(sel=>sel.value=dep);
+  }
   recalc();updateLaborPreview();
+}
+function getDepActual(){
+  const idx=document.getElementById('lf-lote').value;
+  if(idx===''||!st.lotes[idx])return'A';
+  return String(st.lotes[idx].sector)==='2'?'B':'A';
 }
 function onTipoChange(){const tid=document.getElementById('lf-tipo').value;const tipo=st.tipos.find(t=>t.id==tid);document.getElementById('lf-costo-labor').value=tipo?tipo.costo:'';recalc();updateLaborPreview();}
 function addInsRow(){
   const tb=document.getElementById('ins-rows');const tr=document.createElement('tr');
   const iOpts=st.insumos.map(i=>`<option value="${i.id}">${i.nombre}</option>`).join('');
+  const dep=getDepActual();
   tr.innerHTML=`<td><select class="is" onchange="onInsChange(this)">${iOpts}</select></td>
     <td><input type="number" class="ci" min="0" step="0.01" placeholder="0" oninput="recalc();updateLaborPreview()"></td>
     <td><input type="text" class="ui" readonly style="width:44px"></td>
     <td><input type="text" class="ca" readonly style="background:var(--g50);font-size:11px"></td>
     <td><input type="number" class="pi" readonly style="width:72px"></td>
     <td><input type="text" class="ti2" readonly style="background:var(--g50);font-size:11px"></td>
-    <td><select class="ds"><option value="A">Cba. Bustos</option><option value="B">Sta. Cecilia</option></select></td>
+    <td><select class="ds"><option value="A"${dep==='A'?' selected':''}>Cba. Bustos</option><option value="B"${dep==='B'?' selected':''}>Sta. Cecilia</option></select></td>
     <td><button class="ib" onclick="this.closest('tr').remove();recalc();updateLaborPreview()"><i class="ti ti-trash"></i></button></td>`;
   tb.appendChild(tr);onInsChange(tr.querySelector('.is'));recalc();updateLaborPreview();
 }
