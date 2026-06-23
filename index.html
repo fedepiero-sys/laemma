@@ -2847,8 +2847,7 @@ function _capturarLogos(){
 }
 
 // ── EXPONER FUNCIONES AL SCOPE GLOBAL ──
-console.log("DEBUG: About to assign window functions");
-try{
+// ── EXPONER AL SCOPE GLOBAL ──
 Object.assign(window, {
   doLogin, doLogout, postLoginInit, abrirCambioPass, guardarNuevaPass,
   openMobileSidebar, closeMobileSidebar, checkMobileLayout,
@@ -2882,8 +2881,6 @@ Object.assign(window, {
   setResumenKgMode, renderResumenKg,
   abrirConfigLogo, cargarLogo, eliminarLogo,
 });
-console.log("DEBUG: Window functions assigned OK");
-}catch(err){console.error("DEBUG: Error in Object.assign:", err);}
 
 // ── ARRANQUE ──
 window.addEventListener('resize',()=>{checkMobileLayout();if(document.getElementById('panel-campos').classList.contains('on'))resizeCv();});
