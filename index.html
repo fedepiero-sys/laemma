@@ -2645,4 +2645,57 @@ Extraé EXACTAMENTE estos campos del documento y respondé SOLO con JSON válido
   }
 }
 
+// ── EXPONER FUNCIONES AL SCOPE GLOBAL ──
+Object.assign(window, {
+  doLogin, doLogout, abrirCambioPass, guardarNuevaPass,
+  openMobileSidebar, closeMobileSidebar, checkMobileLayout,
+  showToast, setFbStatus, exportarBackup, restaurarBackup,
+  toggleDark, toggleSidebar, go, openMo, closeMo,
+  setTool, zIn, zOut, zFit, undoPt, cancelDraw, loadImg, openMoEscala, applyScale,
+  eliminarImagen, asignarPoligonoALote, updateAsignarLotePanel,
+  openMoLote, onMlCampo, onMlUbicChange, guardarLote, delLote, selLote,
+  switchLabTab, onLoteChange, onTipoChange, addInsRow, onInsChange, recalc, guardarLabor,
+  abrirEditarLabor, addMelInsRow, onMelInsChange, onMelLoteChange, onMelTipoChange, recalcMel, guardarEditLabor,
+  renderRegistro, delLabor, exportCSV,
+  updateBDCounts, openBD, showBDHome, openMoCampo, toggleAlq, guardarCampo, delCampo,
+  openMoCultivo, guardarCultivo, delCultivo,
+  openMoInsumo, guardarInsumo, delInsumo,
+  openMoTipo, guardarTipo, delTipo,
+  guardarPrecioGrano, renderInsumosLista,
+  volverCamposList, abrirCampo, switchCampoDetailTab, toggleAlqCD, guardarCampoDetalle, toggleArchivarCampo,
+  renderCamposResumen, verLotesPorCultivo,
+  renderDeps,
+  setAnMoneda, onAnTCChange, onAnFiltroChange, renderAnalisis, toggleDesglose, anSaveManual,
+  switchComTab, openMoProv, guardarProv, delProv, handleProvXlsx,
+  openMoRemito, addRemRow, onRemInsChange, recalcRemito, guardarRemito, renderRemitos, delRemito,
+  handlePdfDrop, handlePdfFile,
+  guardarTCRegistro, delTC, actualizarTCAutomatico, exportTCCSV, renderTC,
+  cambiarCampaña, crearCampaña,
+  switchGranosTab, switchStockGranosTab, renderStockGranos, renderMovGranos, exportStockGranosCSV, exportMovGranosCSV,
+  switchVentaTab, openMoCPE, recalcCPE, guardarCPE, setKgDesc, confirmarCPE, renderCPETable, delCPE, exportCPECSV,
+  handleCPEPdfDrop, handleCPEPdfFiles, parseCPEAfip,
+  renderFletes, exportFletesCSV,
+  switchTicketTab, openMoTicketGrano, onTkgCampoChange, onTkgLoteChange, recalcTKG, guardarTicketGrano, delTicket,
+  setResumenKgMode, renderResumenKg,
+  abrirConfigLogo, cargarLogo, eliminarLogo,
+});
 
+// ── ARRANQUE ──
+window.addEventListener('resize',()=>{checkMobileLayout();if(document.getElementById('panel-campos').classList.contains('on'))resizeCv();});
+
+if(checkSession()){postLoginInit();}
+document.addEventListener('DOMContentLoaded',()=>{
+  _capturarLogos();
+  checkMobileLayout();
+  if(!currentUser){
+    try{
+      const rem=JSON.parse(localStorage.getItem('lae_remembered')||'null');
+      if(rem){
+        document.getElementById('li-email').value=rem.email;
+        document.getElementById('li-pass').value=rem.pass;
+        document.getElementById('li-remember').checked=true;
+      }
+    }catch(e){}
+    setTimeout(()=>document.getElementById('li-email')&&document.getElementById('li-email').focus(),50);
+  }
+});
