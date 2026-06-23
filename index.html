@@ -2684,6 +2684,80 @@ function setResumenKgMode(m){resKgMode=m;document.getElementById('rk-btn-lote').
 function delTicket(i){if(!confirm('¿Eliminar?'))return;st.ticketsGranos.splice(i,1);saveSt();renderTickets();}
 function renderResumenKg(){const filCampo=document.getElementById('rk-fil-campo').value;document.getElementById('rk-fil-campo').innerHTML='<option value="">Todos los campos</option>'+st.campos.map(c=>`<option value="${c.nombre}">${c.nombre}</option>`).join('');if(filCampo)document.getElementById('rk-fil-campo').value=filCampo;const tks=(st.ticketsGranos||[]).filter(t=>t.aplica==='si'&&(!filCampo||t.campo===filCampo));const wrap=document.getElementById('resumen-kg-wrap');if(!tks.length){wrap.innerHTML='<div style="text-align:center;padding:40px;color:var(--t3)">Sin tickets de rendimiento.</div>';return;}const agr={};tks.forEach(t=>{const k=resKgMode==='lote'?(t.campo+'||'+t.lote):t.cultivo;if(!agr[k])agr[k]={label:resKgMode==='lote'?t.lote:t.cultivo,campo:t.campo,cultivo:t.cultivo,kgNeto:0,lotes:new Set()};agr[k].kgNeto+=(t.tipo==='ingreso'?1:-1)*(t.kgNeto||0);agr[k].lotes.add(t.lote);});wrap.innerHTML='<div class="tw"><table><thead><tr>'+(resKgMode==='lote'?'<th>Lote</th><th>Campo</th>':'<th>Cultivo</th>')+'<th>Cultivo</th><th style="text-align:right">Kg Netos</th><th style="text-align:right">Toneladas</th></tr></thead><tbody>'+Object.values(agr).map(a=>`<tr><td style="font-weight:500">${a.label}</td>${resKgMode==='lote'?`<td>${a.campo}</td>`:''}<td>${a.cultivo}</td><td style="text-align:right;color:var(--g600);font-weight:500">${fmt(a.kgNeto)}</td><td style="text-align:right;color:var(--t2)">${(a.kgNeto/1000).toFixed(2)} tn</td></tr>`).join('')+'</tbody></table></div>';}
 
+async function postLoginInit(){
+  // Mostrar loading
+  document.getElementById('login-screen').innerHTML = `
+    <div style="text-align:center;color:#fff;padding:40px">
+      <div style="font-size:28px;font-weight:800;margin-bottom:12px">laemma</div>
+      <div style="font-size:13px;opacity:.7;margin-bottom:24px">Cargando datos...</div>
+      <div style="width:40px;height:40px;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto"></div>
+    </div>`;
+  document.getElementById('login-screen').style.display='flex';
+
+  // Cargar datos de Firebase con reintentos
+  let intentos=0;
+  while(intentos<3){
+    try{ await fbLoad(); break; }
+    catch(e){
+      intentos++;
+      if(intentos>=3){
+        document.getElementById('login-screen').innerHTML=`
+          <div style="text-align:center;color:#fff;padding:20px">
+            <div style="font-size:20px;font-weight:700;margin-bottom:12px">⚠ Sin conexión</div>
+            <div style="font-size:13px;opacity:.7;margin-bottom:20px">No se pudo conectar.<br>Revisá tu internet.</div>
+            <button onclick="location.reload()" style="padding:10px 24px;background:#fff;color:#1a2a10;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Reintentar</button>
+          </div>`;
+        return;
+      }
+      await new Promise(r=>setTimeout(r,1500));
+    }
+  }
+
+  // Reinicializar state con datos de Firebase
+  const g = fbGet('global', {});
+  st.campos = g.campos||[];
+  st.lotes = g.lotes||[];
+  st.cultivos = g.cultivos||JSON.parse(JSON.stringify(DC));
+  st.tipos = g.tipos||JSON.parse(JSON.stringify(DT));
+  st.insumos = g.insumos||JSON.parse(JSON.stringify(DI));
+  st.depA = g.depA||{}; st.depB = g.depB||{};
+  st.proveedores = g.proveedores||[];
+  st.remitos = g.remitos||[];
+  st.preciosGranos = g.preciosGranos||{};
+  st.depGranos = g.depGranos||JSON.parse(JSON.stringify(DG));
+  st.cpe = g.cpe||[];
+  st.ticketsGranos = g.ticketsGranos||[];
+
+  // Esconder loading
+  document.getElementById('login-screen').style.display='none';
+
+  // Aplicar logo
+  const logo=fbGet('logo',null);
+  if(logo)aplicarLogo(logo);
+
+  const el=document.getElementById('sb-user-name');if(el&&currentUser)el.textContent=currentUser.nombre;
+  checkMobileLayout();
+  initCampaña();refreshTCVal();
+  volverCamposList();renderLotesTable();updateLegend();updateBDCounts();
+  setTimeout(resizeCv,100);
+
+  if(localStorage.getItem('lae_dark')==='1'){document.body.classList.add('dark');const ic=document.getElementById('dark-icon');if(ic)ic.className='ti ti-sun';}
+  if(localStorage.getItem('lae_sb_collapsed')==='1'){document.getElementById('sidebar').classList.add('collapsed');document.getElementById('sb-toggle-ic').className='ti ti-chevrons-right';document.getElementById('sb-toggle-reopen').classList.add('show');document.body.classList.add('sb-collapsed');}
+
+  const hoy=new Date().toISOString().slice(0,10);
+  if(localStorage.getItem('lae_tc_auto_day')!==hoy){
+    fetchTCOficialVenta().then(({venta})=>{
+      let h=tcHistActual();const ex=h.findIndex(r=>r.fecha===hoy);
+      if(ex>=0)h[ex].valor=venta;else h.push({fecha:hoy,valor:venta});
+      saveTCHist(viewingCamp,h);
+      try{localStorage.setItem('lae_tc_auto_day',hoy);}catch(e){}
+      refreshTCVal();
+    }).catch(()=>{});
+  }
+
+  fbListen();
+}
+
 // ── LOGO DEL ESTABLECIMIENTO ──
 function abrirConfigLogo(){
   const logo=fbGet('logo',null);
@@ -2776,7 +2850,7 @@ function _capturarLogos(){
 console.log("DEBUG: About to assign window functions");
 try{
 Object.assign(window, {
-  doLogin, doLogout, abrirCambioPass, guardarNuevaPass,
+  doLogin, doLogout, postLoginInit, abrirCambioPass, guardarNuevaPass,
   openMobileSidebar, closeMobileSidebar, checkMobileLayout,
   showToast, setFbStatus, exportarBackup, restaurarBackup,
   toggleDark, toggleSidebar, go, openMo, closeMo,
