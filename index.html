@@ -397,7 +397,7 @@ canvas{display:block}
       </div>
       <button class="login-btn" onclick="doLogin()">Ingresar</button>
       <div class="login-err" id="login-err"></div>
-      <div class="login-version-r">v1.1 · laemma Agrícola S.A.</div>
+      <div class="login-version-r">v1.2 · laemma Agrícola S.A.</div>
     </div>
   </div>
 </div>
@@ -463,7 +463,7 @@ canvas{display:block}
     <div id="fb-status" class="online" style="display:flex;margin-bottom:6px">
       <i class="ti ti-cloud-check"></i><span id="fb-status-txt">Conectado</span>
     </div>
-    <div class="sb-foot-version">v1.1 · laemma</div>
+    <div class="sb-foot-version">v1.2 · laemma</div>
     <div class="sb-foot-user">
       <span id="sb-user-name">—</span>
       <div style="display:flex;gap:4px;align-items:center">
@@ -637,7 +637,10 @@ canvas{display:block}
           <div class="cr2"><span>Costo insumos (U$S)</span><span id="cs-insumos">U$S 0</span></div>
           <div class="cr2 tot"><span>Total insumos</span><span id="cs-total">U$S 0</span></div>
         </div>
-        <button class="btn btn-g btn-full" onclick="guardarLabor()"><i class="ti ti-check"></i> Guardar labor</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-full" onclick="cancelarLabor()" style="border-color:var(--red);color:var(--red)"><i class="ti ti-x"></i> No guardar</button>
+          <button class="btn btn-g btn-full" onclick="guardarLabor()"><i class="ti ti-check"></i> Guardar labor</button>
+        </div>
       </div>
       <div class="lpc">
         <div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--t3);margin-bottom:10px">Vista previa</div>
@@ -1376,7 +1379,7 @@ function doLogout(){
       </div>
       <button class="login-btn" onclick="doLogin()">Ingresar</button>
       <div class="login-err" id="login-err"></div>
-      <div class="login-version-r">v1.1 · laemma Agrícola S.A.</div>
+      <div class="login-version-r">v1.2 · laemma Agrícola S.A.</div>
     </div>
   </div>`;
   try{
@@ -1537,6 +1540,12 @@ function checkMobileLayout(){
 }
 function go(key){
   if(isMobile())closeMobileSidebar();
+  // Recargar state si está vacío
+  if(!st.lotes||st.lotes.length===0||!st.campos||st.campos.length===0){
+    const g=fbGet('global',{});
+    if(g.lotes)st.lotes=g.lotes;if(g.campos)st.campos=g.campos;
+    if(g.cultivos)st.cultivos=g.cultivos;if(g.tipos)st.tipos=g.tipos;if(g.insumos)st.insumos=g.insumos;
+  }
   document.querySelectorAll('.sb-item').forEach(el=>el.classList.remove('on'));
   document.querySelectorAll('.main>.panel').forEach(el=>el.classList.remove('on'));
   document.getElementById('nav-'+key).classList.add('on');
@@ -1824,11 +1833,23 @@ function nextMin(){return st.labores.length?Math.max(...st.labores.map(l=>l.minu
 function switchLabTab(t){['nueva','registro'].forEach(id=>{document.getElementById('ltab-'+id).classList.toggle('on',id===t);document.getElementById('lpane-'+id).classList.toggle('on',id===t);});if(t==='registro')renderRegistro();}
 function initLaborForm(){
   editingLaborMinuta=null;
+  // Recargar desde Firebase cache si st.lotes está vacío
+  if(!st.lotes||st.lotes.length===0){
+    const g=fbGet('global',{});
+    if(g.lotes&&g.lotes.length>0){st.lotes=g.lotes;st.campos=g.campos||st.campos;st.cultivos=g.cultivos||st.cultivos;st.tipos=g.tipos||st.tipos;st.insumos=g.insumos||st.insumos;}
+  }
   document.getElementById('minuta-num').textContent=nextMin();
   if(!document.getElementById('lf-fecha').value)document.getElementById('lf-fecha').value=new Date().toISOString().slice(0,10);
   document.getElementById('lf-lote').innerHTML='<option value="">Seleccionar...</option>'+st.lotes.map((l,i)=>`<option value="${i}">${l.n}</option>`).join('');
   document.getElementById('lf-tipo').innerHTML='<option value="">Seleccionar...</option>'+st.tipos.map(t=>`<option value="${t.id}">${t.nombre}</option>`).join('');
   recalc();
+}
+
+function cancelarLabor(){
+  if(!confirm('¿Cancelar la labor? Los datos no se guardarán.'))return;
+  ['lf-lote','lf-campo','lf-sector','lf-cultivo','lf-ha-lote','lf-ha-aplic','lf-tipo','lf-costo-labor','lf-obs'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('ins-rows').innerHTML='';
+  initLaborForm();recalc();
 }
 function onLoteChange(){
   const idx=document.getElementById('lf-lote').value;
@@ -2294,7 +2315,12 @@ function toggleArchivarCampo(){const c=st.campos.find(x=>x.id===viewingCampoId);
 function renderDeps(){
   ['A','B'].forEach(dep=>{
     const data=dep==='A'?st.depA:st.depB;
-    document.getElementById('dep-'+dep+'-list').innerHTML=st.insumos.map(ins=>{const stock=data[ins.nombre]||0;const low=stock<0;return`<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:.5px solid var(--bd);font-size:12px"><span class="rp ${RUBRO_CLS[ins.rubro]||'rH'}" style="flex-shrink:0;font-size:9px">${(ins.rubro||'').slice(0,3)}</span><div style="flex:1;font-weight:500">${ins.nombre}</div><div style="font-weight:500;color:${low?'var(--red)':'var(--g600)'}">${stock.toFixed(2)}<span style="font-size:10px;color:var(--t3);margin-left:2px">${ins.unidad}</span></div></div>`;}).join('')||'<div style="padding:16px;font-size:12px;color:var(--t3)">Sin movimientos.</div>';
+    const items=st.insumos.filter(ins=>(data[ins.nombre]||0)!==0);
+    if(!items.length){document.getElementById('dep-'+dep+'-list').innerHTML='<div style="padding:16px;font-size:12px;color:var(--t3)">Sin movimientos.</div>';return;}
+    document.getElementById('dep-'+dep+'-list').innerHTML=items.map(ins=>{
+      const stock=data[ins.nombre]||0;const low=stock<0;
+      return`<div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:.5px solid var(--bd);font-size:12px"><span class="rp ${RUBRO_CLS[ins.rubro]||'rH'}" style="flex-shrink:0;font-size:9px">${(ins.rubro||'').slice(0,3)}</span><div style="flex:1;font-weight:500">${ins.nombre}</div><div style="font-weight:500;color:${low?'var(--red)':'var(--g600)'}">${stock.toFixed(2)}<span style="font-size:10px;color:var(--t3);margin-left:2px">${ins.unidad}</span></div></div>`;
+    }).join('');
   });
 }
 
@@ -2875,7 +2901,7 @@ Object.assign(window, {
   setTool, zIn, zOut, zFit, undoPt, cancelDraw, loadImg, openMoEscala, applyScale,
   eliminarImagen, asignarPoligonoALote, updateAsignarLotePanel,
   openMoLote, onMlCampo, onMlUbicChange, guardarLote, delLote, selLote,
-  switchLabTab, onLoteChange, onTipoChange, addInsRow, onInsChange, recalc, guardarLabor,
+  switchLabTab, onLoteChange, onTipoChange, addInsRow, onInsChange, recalc, guardarLabor, cancelarLabor,
   abrirEditarLabor, addMelInsRow, onMelInsChange, onMelLoteChange, onMelTipoChange, recalcMel, guardarEditLabor,
   renderRegistro, delLabor, exportCSV,
   updateBDCounts, openBD, showBDHome, openMoCampo, toggleAlq, guardarCampo, delCampo,
