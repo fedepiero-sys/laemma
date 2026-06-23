@@ -2646,6 +2646,132 @@ Extraé EXACTAMENTE estos campos del documento y respondé SOLO con JSON válido
   }
 }
 
+
+function parseCPEAfip(text){
+  if(!text||text.length<50)return null;
+  const tn=text.replace(/\s+/g,' ').trim();
+  const numCPE=(tn.match(/(\d{5}-\d{8})/)||[])[1]||'';
+  const ctg=(tn.match(/CTG[:\s]+(\d{8,14})/)||[])[1]||'';
+  let fecha='';
+  const fm=tn.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if(fm)fecha=fm[3]+'-'+fm[2]+'-'+fm[1];
+  const campania=(tn.match(/Campa[\u00f1n]a[:\s]+(\d{4})/)||[])[1]||'';
+  let grano='';
+  for(const g of ['Soja','Maiz','Maíz','Trigo','Girasol','Sorgo','Cebada']){if(tn.includes(g)){grano=g;break;}}
+  const pb=parseInt((tn.match(/Peso Bruto \(kg\)[:\s]+(\d+)/)||[])[1]||'0');
+  const pt=parseInt((tn.match(/Peso Tara \(kg\)[:\s]+(\d+)/)||[])[1]||'0');
+  const pn=parseInt((tn.match(/Peso Neto \(kg\)[:\s]+(\d+)/)||[])[1]||'0');
+  const km=parseInt((tn.match(/Kms?\. a recorrer[:\s]+(\d+)/)||[])[1]||'0');
+  const tarifa=parseInt((tn.match(/Tarifa[:\s]+(\d+)/)||[])[1]||'0');
+  const result={num:numCPE,ctg,fecha,campania,grano,pb,pt,pn,km,tarifa};
+  if(!result.ctg&&!result.num)return null;
+  return result;
+}
+
+function renderFletes(){const desde=document.getElementById('fl-desde').value;const hasta=document.getElementById('fl-hasta').value;const cpes=st.cpe.filter(c=>c.flete>0&&(!desde||c.fecha>=desde)&&(!hasta||c.fecha<=hasta));const wrap=document.getElementById('fletes-wrap');if(!cpes.length){wrap.innerHTML='<div style="text-align:center;padding:40px;color:var(--t3);font-size:12px">Sin fletes registrados.</div>';return;}const total=cpes.reduce((s,c)=>s+(c.flete||0),0);wrap.innerHTML=`<div class="sg"><div class="sc"><div class="sl">CPE con flete</div><div class="sv">${cpes.length}</div></div><div class="sc"><div class="sl">Total fletes</div><div class="sv"><span style="font-size:11px;color:var(--t3)">$</span>${fmt(total)}</div></div></div><div class="tw"><table><thead><tr><th>Fecha</th><th>CPE</th><th>Grano</th><th>Transporte</th><th>Km</th><th>Tarifa</th><th>Tn fact.</th><th>Costo flete</th></tr></thead><tbody>${cpes.map(c=>`<tr><td>${c.fecha}</td><td>${c.num||'—'}</td><td>${c.grano}</td><td>${c.transp||'—'}</td><td>${c.km||'—'}</td><td>${c.tarifa?'$'+fmt(c.tarifa):''}</td><td>${c.tnReal||''}</td><td style="font-weight:500">$${fmt(c.flete)}</td></tr>`).join('')}</tbody></table></div>`;}
+function exportFletesCSV(){renderFletes();alert('Exportar fletes: descargando...');const cpes=st.cpe.filter(c=>c.flete>0);if(!cpes.length)return;const rows=[['Fecha','CPE','Grano','Transporte','Km','Tarifa','Tn','Flete'],...cpes.map(c=>[c.fecha,c.num,c.grano,c.transp,c.km,c.tarifa,c.tnReal,c.flete])];const csv=rows.map(r=>r.join(',')).join('\n');const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='laemma_fletes.csv';a.click();}
+
+// ── TICKETS GRANOS ──
+function switchTicketTab(t){['lista','resumen'].forEach(id=>{document.getElementById('tktab-'+id).classList.toggle('on',id===t);document.getElementById('tkpane-'+id).classList.toggle('on',id===t);});if(t==='lista')renderTickets();if(t==='resumen')renderResumenKg();}
+function openMoTicketGrano(idx=null){eIdx.tkg=idx;document.getElementById('mo-tkg-t').textContent=idx!=null?'Editar ticket':'Nuevo ticket / romaneo';document.getElementById('tkg-dep').innerHTML=(st.depGranos||[]).map(d=>`<option value="${d.id}">${d.nombre}</option>`).join('');document.getElementById('tkg-campania').value=viewingCamp;document.getElementById('tkg-campo').innerHTML='<option value="">Seleccionar...</option>'+st.campos.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join('');if(idx!=null){const t=st.ticketsGranos[idx];Object.keys(t).forEach(k=>{const el=document.getElementById('tkg-'+k);if(el&&k!=='kgNeto'&&k!=='id')el.value=t[k];});recalcTKG();}else{['tkg-fecha','tkg-pb','tkg-pt','tkg-pn','tkg-obs','tkg-cultivo'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('tkg-fecha').value=new Date().toISOString().slice(0,10);document.getElementById('tkg-tipo').value='ingreso';document.getElementById('tkg-aplica').value='si';recalcTKG();}openMo('mo-ticket-grano');}
+function onTkgCampoChange(){const cid=document.getElementById('tkg-campo').value;document.getElementById('tkg-lote').innerHTML='<option value="">Seleccionar...</option>'+st.lotes.filter(l=>l.campoId==cid).map(l=>`<option value="${l.id}">${l.n}</option>`).join('');}
+function onTkgLoteChange(){const lid=document.getElementById('tkg-lote').value;const l=st.lotes.find(x=>String(x.id)===String(lid));if(l&&l.cu)document.getElementById('tkg-cultivo').value=l.cu;}
+function recalcTKG(){const pb=parseFloat(document.getElementById('tkg-pb').value)||0;const pt=parseFloat(document.getElementById('tkg-pt').value)||0;document.getElementById('tkg-pn').value=Math.max(0,pb-pt);}
+function guardarTicketGrano(){const fecha=document.getElementById('tkg-fecha').value;const cultivo=document.getElementById('tkg-cultivo').value.trim();if(!fecha||!cultivo){alert('Completá fecha y cultivo.');return;}const pb=parseFloat(document.getElementById('tkg-pb').value)||0;const pt=parseFloat(document.getElementById('tkg-pt').value)||0;const kgNeto=pb-pt;const depId=document.getElementById('tkg-dep').value;const dep=(st.depGranos||[]).find(d=>String(d.id)===depId);const campoId=document.getElementById('tkg-campo').value;const campo=st.campos.find(c=>String(c.id)===campoId);const loteId=document.getElementById('tkg-lote').value;const lote=st.lotes.find(l=>String(l.id)===loteId);const t={id:eIdx.tkg!=null?st.ticketsGranos[eIdx.tkg].id:nid(st.ticketsGranos||[]),tipo:document.getElementById('tkg-tipo').value,fecha,campania:viewingCamp,campo:campo?campo.nombre:'—',lote:lote?lote.n:'—',aplica:document.getElementById('tkg-aplica').value,depId,dep:dep?dep.nombre:'—',cultivo,pb,pt,kgNeto,obs:document.getElementById('tkg-obs').value};if(eIdx.tkg!=null)st.ticketsGranos[eIdx.tkg]=t;else{if(!st.ticketsGranos)st.ticketsGranos=[];st.ticketsGranos.push(t);}saveSt();closeMo('mo-ticket-grano');renderTickets();}
+function renderTickets(){const tb=document.getElementById('tickets-tbody');const tks=st.ticketsGranos||[];if(!tks.length){tb.innerHTML='<tr><td colspan="12" style="text-align:center;padding:20px;color:var(--t3)">Sin tickets.</td></tr>';return;}tb.innerHTML=tks.sort((a,b)=>b.fecha.localeCompare(a.fecha)).map((t,i)=>`<tr><td><span class="tag" style="background:${t.tipo==='ingreso'?'#EAF3DE':'#FCEBEB'};color:${t.tipo==='ingreso'?'var(--g600)':'var(--red)'}">${t.tipo}</span></td><td>${t.fecha}</td><td>${t.campania}</td><td>${t.campo}</td><td>${t.lote}</td><td>${t.aplica==='si'?'Sí':'No'}</td><td>${t.dep}</td><td>${t.cultivo}</td><td>${fmt(t.pb)}</td><td>${fmt(t.pt)}</td><td style="font-weight:500">${fmt(t.kgNeto)}</td><td><div style="display:flex;gap:2px"><button class="ib" onclick="openMoTicketGrano(${tks.indexOf(t)})"><i class="ti ti-edit"></i></button><button class="ib" onclick="delTicket(${tks.indexOf(t)})"><i class="ti ti-trash"></i></button></div></td></tr>`).join('');}
+let resKgMode='lote';
+function setResumenKgMode(m){resKgMode=m;document.getElementById('rk-btn-lote').style.background=m==='lote'?'var(--g500)':'var(--bgc)';document.getElementById('rk-btn-lote').style.color=m==='lote'?'#fff':'var(--t2)';document.getElementById('rk-btn-cultivo').style.background=m==='cultivo'?'var(--g500)':'var(--bgc)';document.getElementById('rk-btn-cultivo').style.color=m==='cultivo'?'#fff':'var(--t2)';renderResumenKg();}
+function delTicket(i){if(!confirm('¿Eliminar?'))return;st.ticketsGranos.splice(i,1);saveSt();renderTickets();}
+function renderResumenKg(){const filCampo=document.getElementById('rk-fil-campo').value;document.getElementById('rk-fil-campo').innerHTML='<option value="">Todos los campos</option>'+st.campos.map(c=>`<option value="${c.nombre}">${c.nombre}</option>`).join('');if(filCampo)document.getElementById('rk-fil-campo').value=filCampo;const tks=(st.ticketsGranos||[]).filter(t=>t.aplica==='si'&&(!filCampo||t.campo===filCampo));const wrap=document.getElementById('resumen-kg-wrap');if(!tks.length){wrap.innerHTML='<div style="text-align:center;padding:40px;color:var(--t3)">Sin tickets de rendimiento.</div>';return;}const agr={};tks.forEach(t=>{const k=resKgMode==='lote'?(t.campo+'||'+t.lote):t.cultivo;if(!agr[k])agr[k]={label:resKgMode==='lote'?t.lote:t.cultivo,campo:t.campo,cultivo:t.cultivo,kgNeto:0,lotes:new Set()};agr[k].kgNeto+=(t.tipo==='ingreso'?1:-1)*(t.kgNeto||0);agr[k].lotes.add(t.lote);});wrap.innerHTML='<div class="tw"><table><thead><tr>'+(resKgMode==='lote'?'<th>Lote</th><th>Campo</th>':'<th>Cultivo</th>')+'<th>Cultivo</th><th style="text-align:right">Kg Netos</th><th style="text-align:right">Toneladas</th></tr></thead><tbody>'+Object.values(agr).map(a=>`<tr><td style="font-weight:500">${a.label}</td>${resKgMode==='lote'?`<td>${a.campo}</td>`:''}<td>${a.cultivo}</td><td style="text-align:right;color:var(--g600);font-weight:500">${fmt(a.kgNeto)}</td><td style="text-align:right;color:var(--t2)">${(a.kgNeto/1000).toFixed(2)} tn</td></tr>`).join('')+'</tbody></table></div>';}
+
+// ── LOGO DEL ESTABLECIMIENTO ──
+function abrirConfigLogo(){
+  const logo=fbGet('logo',null);
+  const prev=document.getElementById('logo-preview-wrap');
+  const img=document.getElementById('logo-preview-img');
+  const btnEl=document.getElementById('btn-eliminar-logo');
+  if(logo){prev.style.display='block';img.src=logo;btnEl.style.display='';}
+  else{prev.style.display='none';btnEl.style.display='none';}
+  openMo('mo-logo');
+}
+function cargarLogo(e){
+  const f=e.target.files[0];if(!f)return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const img=new Image();
+    img.onload=()=>{
+      const maxH=200;const scale=Math.min(1,maxH/img.height);
+      const canvas=document.createElement('canvas');
+      canvas.width=img.width*scale;canvas.height=img.height*scale;
+      canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
+      const data=canvas.toDataURL('image/png',0.85);
+      fbSet('logo',data);fbCache['logo']=data;
+      aplicarLogo(data);
+      document.getElementById('logo-preview-img').src=data;
+      document.getElementById('logo-preview-wrap').style.display='block';
+      document.getElementById('btn-eliminar-logo').style.display='';
+    };
+    img.src=ev.target.result;
+  };
+  reader.readAsDataURL(f);e.target.value='';
+}
+function eliminarLogo(){
+  if(!confirm('¿Eliminar el logo?'))return;
+  fbSet('logo',null);fbCache['logo']=null;
+  aplicarLogo(null);
+  document.getElementById('logo-preview-wrap').style.display='none';
+  document.getElementById('btn-eliminar-logo').style.display='none';
+}
+function aplicarLogo(src){
+  const imgWrap=document.getElementById('sb-logo-img-wrap');
+  const txtWrap=document.getElementById('sb-logo-text-wrap');
+  const img=document.getElementById('sb-logo-img');
+  if(src){img.src=src;imgWrap.style.display='block';txtWrap.style.display='none';}
+  else{imgWrap.style.display='none';txtWrap.style.display='block';}
+}
+
+// ── BACKUP Y RESTAURACIÓN ──
+async function exportarBackup(){
+  try{
+    const snap=await get(ref(db,'laemma'));
+    const data=snap.exists()?snap.val():{};
+    const backup={version:'1.1',fecha:new Date().toISOString(),data};
+    const json=JSON.stringify(backup,null,2);
+    const blob=new Blob([json],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    const fecha=new Date().toISOString().slice(0,10);
+    a.download=`laemma_backup_${fecha}.json`;
+    a.click();
+    showToast('✓ Backup descargado',false);
+  }catch(e){showToast('✗ Error al generar backup',true);console.error(e);}
+}
+async function restaurarBackup(event){
+  const file=event.target.files[0];
+  if(!file)return;
+  event.target.value='';
+  if(!confirm(`¿Restaurar backup "${file.name}"?\n\nEsto va a REEMPLAZAR todos los datos actuales.\n\nEsta acción no se puede deshacer.`))return;
+  try{
+    const text=await file.text();
+    const backup=JSON.parse(text);
+    if(!backup.data){alert('El archivo no es un backup válido de laemma.');return;}
+    showToast('Restaurando...',false);
+    await set(ref(db,'laemma'),backup.data);
+    showToast('✓ Backup restaurado. Recargando...',false);
+    setTimeout(()=>location.reload(),1500);
+  }catch(e){showToast('✗ Error al restaurar',true);console.error(e);}
+}
+
+// ── LOGOS CAPTURA ──
+let _logoEmmaSrcG='';
+let _logoLaemmaSrcG='';
+function _capturarLogos(){
+  const e=document.querySelector('.login-logo-img');
+  const l=document.querySelector('.login-brand-img');
+  if(e&&e.src)_logoEmmaSrcG=e.src;
+  if(l&&l.src)_logoLaemmaSrcG=l.src;
+}
+
 // ── EXPONER FUNCIONES AL SCOPE GLOBAL ──
 console.log("DEBUG: About to assign window functions");
 try{
