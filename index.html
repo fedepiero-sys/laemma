@@ -639,10 +639,7 @@ canvas{display:block}
         </div>
         <div style="display:flex;gap:10px">
           <button class="btn btn-full" onclick="cancelarLabor()" style="border-color:var(--red);color:var(--red)"><i class="ti ti-x"></i> No guardar</button>
-          <div style="display:flex;gap:10px">
-          <button class="btn btn-full" onclick="cancelarLabor()" style="border-color:var(--red);color:var(--red)"><i class="ti ti-x"></i> No guardar</button>
           <button class="btn btn-g btn-full" onclick="guardarLabor()"><i class="ti ti-check"></i> Guardar labor</button>
-        </div>
         </div>
       </div>
       <div class="lpc">
@@ -1882,11 +1879,24 @@ function getDepActual(){
   return String(st.lotes[idx].sector)==='2'?'B':'A';
 }
 function onTipoChange(){const tid=document.getElementById('lf-tipo').value;const tipo=st.tipos.find(t=>t.id==tid);document.getElementById('lf-costo-labor').value=tipo?tipo.costo:'';recalc();updateLaborPreview();}
+function insOrdenados(){
+  return [...st.insumos].sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
+}
 function addInsRow(){
   const tb=document.getElementById('ins-rows');const tr=document.createElement('tr');
-  const iOpts=st.insumos.map(i=>`<option value="${i.id}">${i.nombre}</option>`).join('');
   const dep=getDepActual();
-  tr.innerHTML=`<td><select class="is" onchange="onInsChange(this)">${iOpts}</select></td>
+  const rowId='ir'+Date.now()+Math.random().toString(36).slice(2,6);
+  tr.dataset.rowId=rowId;
+  tr.innerHTML=`
+    <td style="position:relative;min-width:180px">
+      <input type="text" class="is-search" placeholder="Buscar insumo..." autocomplete="off"
+        style="width:100%;padding:4px 6px;font-size:12px"
+        oninput="filtrarInsRow(this)"
+        onfocus="abrirInsDropdown(this)"
+        onblur="setTimeout(()=>cerrarInsDropdown(this),150)"
+        data-ins-id="">
+      <div class="ins-dropdown" style="display:none;position:absolute;left:0;top:100%;z-index:200;background:var(--bgc);border:.5px solid var(--bdm);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;min-width:220px;width:max-content"></div>
+    </td>
     <td><input type="number" class="ci" min="0" step="0.01" placeholder="0" oninput="recalc();updateLaborPreview()"></td>
     <td><input type="text" class="ui" readonly style="width:44px"></td>
     <td><input type="text" class="ca" readonly style="background:var(--g50);font-size:11px"></td>
@@ -1894,17 +1904,55 @@ function addInsRow(){
     <td><input type="text" class="ti2" readonly style="background:var(--g50);font-size:11px"></td>
     <td><select class="ds"><option value="A"${dep==='A'?' selected':''}>Cba. Bustos</option><option value="B"${dep==='B'?' selected':''}>Sta. Cecilia</option></select></td>
     <td><button class="ib" onclick="this.closest('tr').remove();recalc();updateLaborPreview()"><i class="ti ti-trash"></i></button></td>`;
-  tb.appendChild(tr);onInsChange(tr.querySelector('.is'));recalc();updateLaborPreview();
+  tb.appendChild(tr);
+  abrirInsDropdown(tr.querySelector('.is-search'));
+  recalc();updateLaborPreview();
+}
+function abrirInsDropdown(input){
+  const q=input.value.toLowerCase();
+  const dd=input.nextElementSibling;
+  const lista=insOrdenados().filter(i=>!q||i.nombre.toLowerCase().includes(q));
+  if(!lista.length){dd.style.display='none';return;}
+  dd.innerHTML=lista.map(i=>`<div class="ins-opt" data-id="${i.id}" data-nombre="${i.nombre}"
+    onmousedown="seleccionarIns(this)"
+    style="padding:7px 12px;font-size:12px;cursor:pointer;white-space:nowrap"
+    onmouseover="this.style.background='var(--g50)'"
+    onmouseout="this.style.background=''">${i.nombre}</div>`).join('');
+  dd.style.display='block';
+}
+function filtrarInsRow(input){
+  abrirInsDropdown(input);
+}
+function cerrarInsDropdown(input){
+  const dd=input.nextElementSibling;
+  if(dd)dd.style.display='none';
+}
+function seleccionarIns(opt){
+  const td=opt.closest('td');
+  const input=td.querySelector('.is-search');
+  const dd=td.querySelector('.ins-dropdown');
+  const ins=st.insumos.find(i=>i.id==opt.dataset.id);
+  if(!ins)return;
+  input.value=ins.nombre;
+  input.dataset.insId=ins.id;
+  dd.style.display='none';
+  // Actualizar unidad y precio en la fila
+  const tr=td.closest('tr');
+  tr.querySelector('.ui').value=ins.unidad||'';
+  tr.querySelector('.pi').value=ins.precio||'';
+  recalc();updateLaborPreview();
 }
 function onInsChange(sel){const row=sel.closest('tr');const ins=st.insumos.find(i=>i.id==sel.value);row.querySelector('.ui').value=ins?ins.unidad:'';row.querySelector('.pi').value=ins?ins.precio:'';recalc();updateLaborPreview();}
 function getInsRows(){
-  return[...document.querySelectorAll('#ins-rows tr')].map(row=>({
-    insId:row.querySelector('.is').value,
-    dep:row.querySelector('.ds').value,
-    cantHa:parseFloat(row.querySelector('.ci').value)||0,
-    unidad:row.querySelector('.ui').value,
-    cph:parseFloat(row.querySelector('.pi').value)||0   // precio por UNIDAD (U$S/Unid)
-  }));
+  return[...document.querySelectorAll('#ins-rows tr')].map(row=>{
+    const searchInput=row.querySelector('.is-search');
+    const selectEl=row.querySelector('.is');
+    const insId=searchInput?searchInput.dataset.insId:(selectEl?selectEl.value:'');
+    return{insId,dep:row.querySelector('.ds').value,
+      cantHa:parseFloat(row.querySelector('.ci').value)||0,
+      unidad:row.querySelector('.ui').value,
+      cph:parseFloat(row.querySelector('.pi').value)||0};
+  }).filter(r=>r.insId);
 }
 function recalc(){
   const ha=parseFloat(document.getElementById('lf-ha-aplic').value)||0;
@@ -2175,8 +2223,8 @@ function renderCamposResumen(){
   const haS2=lotesS2.reduce((s,l)=>s+(parseFloat(l.ha)||0),0);
 
   const campData=loadCampData(viewingCamp);
-  const cpl=campData.cultivosPorLote||{};
-  const cpl2=campData.cultivos2PorLote||{};
+  const cpl=normalizarCPL(campData.cultivosPorLote||{});
+  const cpl2=normalizarCPL(campData.cultivos2PorLote||{});
 
   // Nombre localidad por sector (de los campos)
   function localidadSector(sec){
@@ -2274,8 +2322,8 @@ function renderCamposResumen(){
 
 function verLotesPorCultivo(cultivo, loteIds){
   const campData=loadCampData(viewingCamp);
-  const cpl=campData.cultivosPorLote||{};
-  const cpl2=campData.cultivos2PorLote||{};
+  const cpl=normalizarCPL(campData.cultivosPorLote||{});
+  const cpl2=normalizarCPL(campData.cultivos2PorLote||{});
   const esCu2=cultivo.endsWith(' (2°)');
   const cuBase=cultivo.replace(' (2°)','');
 
@@ -2355,10 +2403,22 @@ let anMoneda='USD';let anData=null;let anCamp=null;let tcManualOverride=null;
 function setAnMoneda(m){anMoneda=m;document.getElementById('an-btn-ars').classList.toggle('on',m==='ARS');document.getElementById('an-btn-usd').classList.toggle('on',m==='USD');renderAnalisis();}
 function onAnTCChange(){const v=parseFloat(document.getElementById('an-tc').value);tcManualOverride=(v&&v>0)?v:null;renderAnalisis();}
 function onAnFiltroChange(){renderAnalisis();}
+function normalizarCPL(cpl){
+  // Normalizar claves: tanto 'l1' como '1' -> '1' (usar id numérico como clave)
+  if(!cpl)return{};
+  const out={};
+  for(const [k,v] of Object.entries(cpl)){
+    const key=k.startsWith('l')?k.slice(1):k;
+    out[key]=v;
+  }
+  return out;
+}
 function anLoadCamp(n){
   const d=loadCampData(n);
-  if(n===viewingCamp)return{lotes:st.lotes,labores:st.labores,analisisManual:st.analisisManual||{},cultivosPorLote:d.cultivosPorLote||{},cultivos2PorLote:d.cultivos2PorLote||{}};
-  return{lotes:st.lotes,labores:d.labores,analisisManual:d.analisisManual||{},cultivosPorLote:d.cultivosPorLote||{},cultivos2PorLote:d.cultivos2PorLote||{}};
+  const cpl=normalizarCPL(d.cultivosPorLote||{});
+  const cp2=normalizarCPL(d.cultivos2PorLote||{});
+  if(n===viewingCamp)return{lotes:st.lotes,labores:st.labores,analisisManual:st.analisisManual||{},cultivosPorLote:cpl,cultivos2PorLote:cp2};
+  return{lotes:st.lotes,labores:d.labores,analisisManual:d.analisisManual||{},cultivosPorLote:cpl,cultivos2PorLote:cp2};
 }
 function anSaveManual(loteId,field,val){
   if(!anData)return;
@@ -2387,11 +2447,11 @@ function renderAnalisis(){
   const campos=[...new Set(anData.lotes.map(l=>l.campo).filter(Boolean))].sort();
   const selCampo=document.getElementById('an-campo');const curCampo=selCampo.value;
   selCampo.innerHTML='<option value="">Todos</option>'+campos.map(c=>`<option value="${c}"${c===curCampo?' selected':''}>${c}</option>`).join('');
-  const cultivos=[...new Set(anData.lotes.map(l=>(anData.cultivosPorLote||{})[l.id]).filter(Boolean))].sort();
+  const cultivos=[...new Set(anData.lotes.map(l=>(anData.cultivosPorLote||{})[String(l.id)]).filter(Boolean))].sort();
   const selCultivo=document.getElementById('an-cultivo');const curCultivo=selCultivo.value;
   selCultivo.innerHTML='<option value="">Todos</option>'+cultivos.map(c=>`<option value="${c}"${c===curCultivo?' selected':''}>${c}</option>`).join('');
   const fCampo=document.getElementById('an-campo').value;const fSector=document.getElementById('an-sector').value;const fCultivo=document.getElementById('an-cultivo').value;
-  let lotesFiltrados=anData.lotes.filter(l=>{const cu=(anData.cultivosPorLote||{})[l.id];if(fCampo&&l.campo!==fCampo)return false;if(fSector&&String(l.sector)!==fSector)return false;if(fCultivo&&cu!==fCultivo)return false;return true;});
+  let lotesFiltrados=anData.lotes.filter(l=>{const cu=(anData.cultivosPorLote||{})[String(l.id)];if(fCampo&&l.campo!==fCampo)return false;if(fSector&&String(l.sector)!==fSector)return false;if(fCultivo&&cu!==fCultivo)return false;return true;});
   const selLote=document.getElementById('an-lote');const curLote=selLote.value;
   selLote.innerHTML='<option value="">Todos</option>'+lotesFiltrados.map(l=>`<option value="${l.id}"${String(l.id)===curLote?' selected':''}>${l.n}</option>`).join('');
   const fLote=document.getElementById('an-lote').value;
@@ -2410,8 +2470,8 @@ function renderAnalisis(){
   let prodTn=0,seguroTotal=0,alquilerTotal=0,precioBruto=0,gastoComercPct=0;
   if(modoAgregado){precioBruto=(st.preciosGranos&&st.preciosGranos[fCultivo])||0;const m=anData.analisisManual[manualKey]||{};prodTn=parseFloat(m.prodTn)||0;gastoComercPct=parseFloat(m.gastoComercPct)||0;lotesFiltrados.forEach(l=>{const ha=parseFloat(l.ha)||0;seguroTotal+=(parseFloat(m.seguroHa)||0)*ha;alquilerTotal+=(parseFloat(m.alquilerHa)||0)*ha;});}
   else{let gastoComSum=0,nManual=0;lotesFiltrados.forEach(l=>{
-    const cu=(anData.cultivosPorLote||{})[l.id];
-    const cu2=(anData.cultivos2PorLote||{})[l.id];
+    const cu=(anData.cultivosPorLote||{})[String(l.id)];
+    const cu2=(anData.cultivos2PorLote||{})[String(l.id)];
     const ha=parseFloat(l.ha)||0;
     // Cultivo 1
     const m=anData.analisisManual[l.id]||{};
@@ -2463,8 +2523,8 @@ function renderAnalisis(){
        <td><input type="number" min="0" step="0.01" value="${(anData.analisisManual[manualKey]||{}).seguroHa||''}" placeholder="0" style="width:70px" onchange="anSaveManual('${manualKey}','seguroHa',this.value);renderAnalisis()"></td>
        <td><input type="number" min="0" step="0.01" value="${(anData.analisisManual[manualKey]||{}).alquilerHa||''}" placeholder="0" style="width:70px" onchange="anSaveManual('${manualKey}','alquilerHa',this.value);renderAnalisis()"></td></tr>`
     :lotesFiltrados.map(l=>{
-      const cu=(anData.cultivosPorLote||{})[l.id];
-      const cu2=(anData.cultivos2PorLote||{})[l.id];
+      const cu=(anData.cultivosPorLote||{})[String(l.id)];
+      const cu2=(anData.cultivos2PorLote||{})[String(l.id)];
       let rows=loteRowSingle(l,cu,'');
       if(cu2)rows+=loteRowSingle(l,cu2,'_c2');
       return rows;
@@ -2926,7 +2986,7 @@ Object.assign(window, {
   setTool, zIn, zOut, zFit, undoPt, cancelDraw, loadImg, openMoEscala, applyScale,
   eliminarImagen, asignarPoligonoALote, updateAsignarLotePanel,
   openMoLote, onMlCampo, onMlUbicChange, guardarLote, delLote, selLote,
-  switchLabTab, onLoteChange, onTipoChange, addInsRow, onInsChange, recalc, guardarLabor, cancelarLabor, getDepActual, cancelarLabor,
+  switchLabTab, normalizarCPL, insOrdenados, onLoteChange, onTipoChange, addInsRow, onInsChange, recalc, guardarLabor, cancelarLabor, getDepActual, cancelarLabor,
   abrirEditarLabor, addMelInsRow, onMelInsChange, onMelLoteChange, onMelTipoChange, recalcMel, guardarEditLabor,
   renderRegistro, delLabor, exportCSV,
   updateBDCounts, openBD, showBDHome, openMoCampo, toggleAlq, guardarCampo, delCampo,
