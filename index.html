@@ -1915,31 +1915,46 @@ function abrirInsDropdown(input){
   if(!lista.length){dd.style.display='none';return;}
   dd.innerHTML=lista.map(i=>`<div class="ins-opt" data-id="${i.id}" data-nombre="${i.nombre}"
     onmousedown="seleccionarIns(this)"
-    style="padding:7px 12px;font-size:12px;cursor:pointer;white-space:nowrap"
+    style="padding:7px 12px;font-size:12px;cursor:pointer;white-space:nowrap;border-bottom:.5px solid var(--bd)"
     onmouseover="this.style.background='var(--g50)'"
     onmouseout="this.style.background=''">${i.nombre}</div>`).join('');
-  dd.style.display='block';
+  dd.style.cssText='display:block;position:fixed;z-index:9999;background:var(--bgc);border:.5px solid var(--bdm);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);max-height:220px;overflow-y:auto;min-width:240px;';
+  // Posicionar debajo del input
+  const rect=input.getBoundingClientRect();
+  dd.style.top=(rect.bottom+2)+'px';
+  dd.style.left=rect.left+'px';
+  dd.style.width=Math.max(rect.width,240)+'px';
+  document.body.appendChild(dd);
+  dd._targetInput=input;
 }
 function filtrarInsRow(input){
   abrirInsDropdown(input);
 }
 function cerrarInsDropdown(input){
+  // El dropdown puede estar en body ahora
   const dd=input.nextElementSibling;
   if(dd)dd.style.display='none';
+  // También buscar dropdowns huerfanos en body
+  document.querySelectorAll('.ins-dropdown').forEach(d=>{
+    if(!d.closest('tr'))d.remove();
+    else d.style.display='none';
+  });
 }
 function seleccionarIns(opt){
-  const td=opt.closest('td');
-  const input=td.querySelector('.is-search');
-  const dd=td.querySelector('.ins-dropdown');
   const ins=st.insumos.find(i=>i.id==opt.dataset.id);
   if(!ins)return;
+  // El dropdown está en body, encontrar el input por data-target
+  const dd=opt.closest('.ins-dropdown');
+  const input=dd?dd._targetInput:null;
+  if(!input)return;
   input.value=ins.nombre;
   input.dataset.insId=ins.id;
   dd.style.display='none';
-  // Actualizar unidad y precio en la fila
-  const tr=td.closest('tr');
-  tr.querySelector('.ui').value=ins.unidad||'';
-  tr.querySelector('.pi').value=ins.precio||'';
+  const tr=input.closest('tr');
+  if(tr){
+    tr.querySelector('.ui').value=ins.unidad||'';
+    tr.querySelector('.pi').value=ins.precio||'';
+  }
   recalc();updateLaborPreview();
 }
 function onInsChange(sel){const row=sel.closest('tr');const ins=st.insumos.find(i=>i.id==sel.value);row.querySelector('.ui').value=ins?ins.unidad:'';row.querySelector('.pi').value=ins?ins.precio:'';recalc();updateLaborPreview();}
