@@ -639,7 +639,10 @@ canvas{display:block}
         </div>
         <div style="display:flex;gap:10px">
           <button class="btn btn-full" onclick="cancelarLabor()" style="border-color:var(--red);color:var(--red)"><i class="ti ti-x"></i> No guardar</button>
+          <div style="display:flex;gap:10px">
+          <button class="btn btn-full" onclick="cancelarLabor()" style="border-color:var(--red);color:var(--red)"><i class="ti ti-x"></i> No guardar</button>
           <button class="btn btn-g btn-full" onclick="guardarLabor()"><i class="ti ti-check"></i> Guardar labor</button>
+        </div>
         </div>
       </div>
       <div class="lpc">
@@ -1452,14 +1455,13 @@ function loadSt(){
 }
 function saveSt(){
   saveCampData();
-  // Nunca sobreescribir lotes con array vacío — si st.lotes está vacío, recuperar del cache
-  if(!st.lotes||st.lotes.length===0){
-    const cached=fbGet('global',{});
-    if(cached.lotes&&cached.lotes.length>0){
-      st.lotes=cached.lotes;
-      console.warn('saveSt: st.lotes estaba vacío, recuperado del cache');
-    }
-  }
+  // Protección: nunca sobreescribir lotes/campos con arrays vacíos
+  const cached = fbGet('global',{});
+  if(!st.lotes||st.lotes.length===0) st.lotes = cached.lotes||[];
+  if(!st.campos||st.campos.length===0) st.campos = cached.campos||[];
+  if(!st.cultivos||st.cultivos.length===0) st.cultivos = cached.cultivos||[];
+  if(!st.tipos||st.tipos.length===0) st.tipos = cached.tipos||[];
+  if(!st.insumos||st.insumos.length===0) st.insumos = cached.insumos||[];
   const global = {
     campos:st.campos, lotes:st.lotes, cultivos:st.cultivos, tipos:st.tipos,
     insumos:st.insumos, depA:st.depA, depB:st.depB,
@@ -1473,25 +1475,29 @@ function saveSt(){
 // Helper: cultivo de un lote en la campaña actual
 function getCultivoLote(loteId){
   const d=loadCampData(viewingCamp);
-  return (d.cultivosPorLote||{})[loteId]||null;
+  const cpl=d.cultivosPorLote||{};
+  // Soportar tanto clave con prefijo 'l' como sin prefijo (retrocompatibilidad)
+  return cpl['l'+loteId]||cpl[loteId]||null;
 }
 function setCultivoLote(loteId, cultivo){
   const key='camp_'+viewingCamp;
   const d=loadCampData(viewingCamp);
   if(!d.cultivosPorLote)d.cultivosPorLote={};
-  d.cultivosPorLote[loteId]=cultivo;
+  // Prefijo 'l' para evitar que Firebase convierta a array
+  d.cultivosPorLote['l'+loteId]=cultivo;
   fbCache[key]=d; fbSet(key,d);
 }
 function getCultivo2Lote(loteId){
   const d=loadCampData(viewingCamp);
-  return (d.cultivos2PorLote||{})[loteId]||null;
+  const c2=d.cultivos2PorLote||{};
+  return c2['l'+loteId]||c2[loteId]||null;
 }
 function setCultivo2Lote(loteId, cultivo){
   const key='camp_'+viewingCamp;
   const d=loadCampData(viewingCamp);
   if(!d.cultivos2PorLote)d.cultivos2PorLote={};
-  if(cultivo)d.cultivos2PorLote[loteId]=cultivo;
-  else delete d.cultivos2PorLote[loteId];
+  if(cultivo)d.cultivos2PorLote['l'+loteId]=cultivo;
+  else delete d.cultivos2PorLote['l'+loteId];
   fbCache[key]=d; fbSet(key,d);
 }
 let st=loadSt();
@@ -2925,7 +2931,7 @@ Object.assign(window, {
   setTool, zIn, zOut, zFit, undoPt, cancelDraw, loadImg, openMoEscala, applyScale,
   eliminarImagen, asignarPoligonoALote, updateAsignarLotePanel,
   openMoLote, onMlCampo, onMlUbicChange, guardarLote, delLote, selLote,
-  switchLabTab, onLoteChange, onTipoChange, addInsRow, onInsChange, recalc, guardarLabor, cancelarLabor,
+  switchLabTab, onLoteChange, onTipoChange, addInsRow, onInsChange, recalc, guardarLabor, cancelarLabor, getDepActual, cancelarLabor,
   abrirEditarLabor, addMelInsRow, onMelInsChange, onMelLoteChange, onMelTipoChange, recalcMel, guardarEditLabor,
   renderRegistro, delLabor, exportCSV,
   updateBDCounts, openBD, showBDHome, openMoCampo, toggleAlq, guardarCampo, delCampo,
