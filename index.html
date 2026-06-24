@@ -1879,24 +1879,11 @@ function getDepActual(){
   return String(st.lotes[idx].sector)==='2'?'B':'A';
 }
 function onTipoChange(){const tid=document.getElementById('lf-tipo').value;const tipo=st.tipos.find(t=>t.id==tid);document.getElementById('lf-costo-labor').value=tipo?tipo.costo:'';recalc();updateLaborPreview();}
-function insOrdenados(){
-  return [...st.insumos].sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
-}
 function addInsRow(){
   const tb=document.getElementById('ins-rows');const tr=document.createElement('tr');
+  const iOpts=[...st.insumos].sort((a,b)=>a.nombre.localeCompare(b.nombre,'es')).map(i=>`<option value="${i.id}">${i.nombre}</option>`).join('');
   const dep=getDepActual();
-  const rowId='ir'+Date.now()+Math.random().toString(36).slice(2,6);
-  tr.dataset.rowId=rowId;
-  tr.innerHTML=`
-    <td style="position:relative;min-width:180px">
-      <input type="text" class="is-search" placeholder="Buscar insumo..." autocomplete="off"
-        style="width:100%;padding:4px 6px;font-size:12px"
-        oninput="filtrarInsRow(this)"
-        onfocus="abrirInsDropdown(this)"
-        onblur="setTimeout(()=>cerrarInsDropdown(this),150)"
-        data-ins-id="">
-      <div class="ins-dropdown" style="display:none;position:absolute;left:0;top:100%;z-index:200;background:var(--bgc);border:.5px solid var(--bdm);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;min-width:220px;width:max-content"></div>
-    </td>
+  tr.innerHTML=`<td><select class="is" onchange="onInsChange(this)" style="min-width:160px">${iOpts}</select></td>
     <td><input type="number" class="ci" min="0" step="0.01" placeholder="0" oninput="recalc();updateLaborPreview()"></td>
     <td><input type="text" class="ui" readonly style="width:44px"></td>
     <td><input type="text" class="ca" readonly style="background:var(--g50);font-size:11px"></td>
@@ -1904,70 +1891,17 @@ function addInsRow(){
     <td><input type="text" class="ti2" readonly style="background:var(--g50);font-size:11px"></td>
     <td><select class="ds"><option value="A"${dep==='A'?' selected':''}>Cba. Bustos</option><option value="B"${dep==='B'?' selected':''}>Sta. Cecilia</option></select></td>
     <td><button class="ib" onclick="this.closest('tr').remove();recalc();updateLaborPreview()"><i class="ti ti-trash"></i></button></td>`;
-  tb.appendChild(tr);
-  abrirInsDropdown(tr.querySelector('.is-search'));
-  recalc();updateLaborPreview();
-}
-function abrirInsDropdown(input){
-  const q=input.value.toLowerCase();
-  const dd=input.nextElementSibling;
-  const lista=insOrdenados().filter(i=>!q||i.nombre.toLowerCase().includes(q));
-  if(!lista.length){dd.style.display='none';return;}
-  dd.innerHTML=lista.map(i=>`<div class="ins-opt" data-id="${i.id}" data-nombre="${i.nombre}"
-    onmousedown="seleccionarIns(this)"
-    style="padding:7px 12px;font-size:12px;cursor:pointer;white-space:nowrap;border-bottom:.5px solid var(--bd)"
-    onmouseover="this.style.background='var(--g50)'"
-    onmouseout="this.style.background=''">${i.nombre}</div>`).join('');
-  dd.style.cssText='display:block;position:fixed;z-index:9999;background:var(--bgc);border:.5px solid var(--bdm);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);max-height:220px;overflow-y:auto;min-width:240px;';
-  // Posicionar debajo del input
-  const rect=input.getBoundingClientRect();
-  dd.style.top=(rect.bottom+2)+'px';
-  dd.style.left=rect.left+'px';
-  dd.style.width=Math.max(rect.width,240)+'px';
-  document.body.appendChild(dd);
-  dd._targetInput=input;
-}
-function filtrarInsRow(input){
-  abrirInsDropdown(input);
-}
-function cerrarInsDropdown(input){
-  // El dropdown puede estar en body ahora
-  const dd=input.nextElementSibling;
-  if(dd)dd.style.display='none';
-  // También buscar dropdowns huerfanos en body
-  document.querySelectorAll('.ins-dropdown').forEach(d=>{
-    if(!d.closest('tr'))d.remove();
-    else d.style.display='none';
-  });
-}
-function seleccionarIns(opt){
-  const ins=st.insumos.find(i=>i.id==opt.dataset.id);
-  if(!ins)return;
-  // El dropdown está en body, encontrar el input por data-target
-  const dd=opt.closest('.ins-dropdown');
-  const input=dd?dd._targetInput:null;
-  if(!input)return;
-  input.value=ins.nombre;
-  input.dataset.insId=ins.id;
-  dd.style.display='none';
-  const tr=input.closest('tr');
-  if(tr){
-    tr.querySelector('.ui').value=ins.unidad||'';
-    tr.querySelector('.pi').value=ins.precio||'';
-  }
-  recalc();updateLaborPreview();
+  tb.appendChild(tr);onInsChange(tr.querySelector('.is'));recalc();updateLaborPreview();
 }
 function onInsChange(sel){const row=sel.closest('tr');const ins=st.insumos.find(i=>i.id==sel.value);row.querySelector('.ui').value=ins?ins.unidad:'';row.querySelector('.pi').value=ins?ins.precio:'';recalc();updateLaborPreview();}
 function getInsRows(){
-  return[...document.querySelectorAll('#ins-rows tr')].map(row=>{
-    const searchInput=row.querySelector('.is-search');
-    const selectEl=row.querySelector('.is');
-    const insId=searchInput?searchInput.dataset.insId:(selectEl?selectEl.value:'');
-    return{insId,dep:row.querySelector('.ds').value,
-      cantHa:parseFloat(row.querySelector('.ci').value)||0,
-      unidad:row.querySelector('.ui').value,
-      cph:parseFloat(row.querySelector('.pi').value)||0};
-  }).filter(r=>r.insId);
+  return[...document.querySelectorAll('#ins-rows tr')].map(row=>({
+    insId:row.querySelector('.is').value,
+    dep:row.querySelector('.ds').value,
+    cantHa:parseFloat(row.querySelector('.ci').value)||0,
+    unidad:row.querySelector('.ui').value,
+    cph:parseFloat(row.querySelector('.pi').value)||0
+  })).filter(r=>r.insId);
 }
 function recalc(){
   const ha=parseFloat(document.getElementById('lf-ha-aplic').value)||0;
@@ -3001,7 +2935,7 @@ Object.assign(window, {
   setTool, zIn, zOut, zFit, undoPt, cancelDraw, loadImg, openMoEscala, applyScale,
   eliminarImagen, asignarPoligonoALote, updateAsignarLotePanel,
   openMoLote, onMlCampo, onMlUbicChange, guardarLote, delLote, selLote,
-  switchLabTab, normalizarCPL, insOrdenados, onLoteChange, onTipoChange, addInsRow, onInsChange, recalc, guardarLabor, cancelarLabor, getDepActual, cancelarLabor,
+  switchLabTab, normalizarCPL, onLoteChange, onTipoChange, addInsRow, onInsChange, recalc, guardarLabor, cancelarLabor, getDepActual, cancelarLabor,
   abrirEditarLabor, addMelInsRow, onMelInsChange, onMelLoteChange, onMelTipoChange, recalcMel, guardarEditLabor,
   renderRegistro, delLabor, exportCSV,
   updateBDCounts, openBD, showBDHome, openMoCampo, toggleAlq, guardarCampo, delCampo,
