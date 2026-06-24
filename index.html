@@ -1224,13 +1224,8 @@ let fbInitialized = false;
 
 async function fbLoad() {
   try {
-    const snap = await get(ref(db, 'laemma'));
+    const snap = await get(ref(db, '/'));
     fbCache = snap.exists() ? snap.val() : {};
-    // Asegurar que custom_passes esté cargado
-    if(!fbCache['custom_passes']){
-      const passSnap = await get(ref(db, 'laemma/custom_passes'));
-      fbCache['custom_passes'] = passSnap.exists() ? passSnap.val() : {};
-    }
     fbInitialized = true;
   } catch(e) {
     console.error('Firebase load error:', e);
@@ -1242,7 +1237,7 @@ async function fbLoad() {
 async function fbSet(path, value) {
   setFbStatus('saving');
   try {
-    await set(ref(db, 'laemma/' + path), value);
+    await set(ref(db, path), value);
     fbCache[path] = value;
     setFbStatus('online');
     showToast('✓ Guardado en la nube', false);
@@ -1290,7 +1285,7 @@ function fbListen() {
     if(!connected) showToast('⚠ Sin conexión a Firebase — los cambios no se están guardando', true);
   });
 
-  onValue(ref(db, 'laemma'), snap => {
+  onValue(ref(db, '/'), snap => {
     if (!snap.exists()) return;
     const newData = snap.val();
     // Solo actualizar si cambió algo relevante a la campaña actual
