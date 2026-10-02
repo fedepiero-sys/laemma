@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use serde::Deserialize;
+use serde_json::Value;
 
 /// Id de la variable ICL en el catalogo de "Principales variables" del BCRA,
 /// usado como respaldo si no se puede resolver dinamicamente por descripcion
@@ -8,24 +8,7 @@ pub const ICL_ID_FALLBACK: i64 = 40;
 
 const BASE_URL: &str = "https://api.bcra.gob.ar/estadisticas/v4.0/monetarias";
 
-#[derive(Debug, Deserialize)]
-struct ListadoResponse {
-    results: Vec<VariableInfo>,
-}
-
-#[derive(Debug, Deserialize)]
-struct VariableInfo {
-    #[serde(rename = "idVariable")]
-    id_variable: i64,
-    descripcion: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct SerieResponse {
-    results: Vec<DatoSerie>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DatoSerie {
     pub fecha: String,
     pub valor: f64,
@@ -38,6 +21,42 @@ fn error_conexion<E: std::fmt::Display>(e: E) -> String {
     )
 }
 
+fn truncar(s: &str) -> String {
+    if s.chars().count() > 600 {
+        format!("{}...", s.chars().take(600).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
+/// Busca un campo por varias variantes de nombre (la API del BCRA no es
+/// siempre consistente con mayusculas/minusculas entre endpoints/versiones).
+fn campo<'a>(obj: &'a Value, nombres: &[&str]) -> Option<&'a Value> {
+    nombres.iter().find_map(|n| obj.get(n))
+}
+
+fn campo_texto(obj: &Value, nombres: &[&str]) -> Option<String> {
+    campo(obj, nombres).and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
+fn campo_numero(obj: &Value, nombres: &[&str]) -> Option<f64> {
+    campo(obj, nombres).and_then(|v| v.as_f64())
+}
+
+/// Encuentra el arreglo de resultados sin importar como este envuelta la
+/// respuesta (algunas APIs del BCRA devuelven {"results": [...]}, otras
+/// {"results": {"detalle": [...]}} o directamente un arreglo).
+fn extraer_resultados(data: &Value) -> Option<&Vec<Value>> {
+    if let Some(arr) = data.as_array() {
+        return Some(arr);
+    }
+    let results = campo(data, &["results", "Results", "resultados"])?;
+    if let Some(arr) = results.as_array() {
+        return Some(arr);
+    }
+    campo(results, &["detalle", "Detalle"]).and_then(|v| v.as_array())
+}
+
 pub fn cliente_http() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -46,21 +65,48 @@ pub fn cliente_http() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("No se pudo inicializar el cliente HTTP: {}", e))
 }
 
+async fn fetch_json(client: &reqwest::Client, url: &str, query: &[(&str, String)]) -> Result<Value, String> {
+    let resp = client.get(url).query(query).send().await.map_err(error_conexion)?;
+    let status = resp.status();
+    let texto = resp.text().await.map_err(error_conexion)?;
+    if !status.is_success() {
+        return Err(format!(
+            "El BCRA respondió un error ({}) al consultar el ICL. Detalle: {}",
+            status,
+            truncar(&texto)
+        ));
+    }
+    serde_json::from_str(&texto).map_err(|e| {
+        format!(
+            "No se pudo interpretar la respuesta del BCRA. Pasale este detalle a soporte para ajustarlo: {} — respuesta: {}",
+            e,
+            truncar(&texto)
+        )
+    })
+}
+
 /// Busca el id de variable del ICL por su descripcion en el catalogo del BCRA.
 /// Si la busqueda falla (sin red, formato distinto, etc.) el llamador debe
 /// usar ICL_ID_FALLBACK.
 pub async fn id_variable_icl(client: &reqwest::Client) -> Result<i64, String> {
-    let resp = client.get(BASE_URL).send().await.map_err(error_conexion)?;
-    let resp = resp.error_for_status().map_err(error_conexion)?;
-    let data: ListadoResponse = resp.json().await.map_err(error_conexion)?;
-    data.results
-        .into_iter()
-        .find(|v| {
-            let d = v.descripcion.to_uppercase();
-            d.contains("CONTRATOS DE LOCACION") || d.contains("CONTRATOS DE LOCACIÓN") || d.contains("(ICL)")
-        })
-        .map(|v| v.id_variable)
-        .ok_or_else(|| "No se encontró la variable ICL en el listado del BCRA".to_string())
+    let data = fetch_json(client, BASE_URL, &[]).await?;
+    let resultados = extraer_resultados(&data).ok_or_else(|| {
+        format!(
+            "No se reconoció el formato del listado de variables del BCRA. Respuesta: {}",
+            truncar(&data.to_string())
+        )
+    })?;
+
+    for item in resultados {
+        let descripcion = campo_texto(item, &["descripcion", "Descripcion", "DESCRIPCION"]).unwrap_or_default();
+        let d = descripcion.to_uppercase();
+        if d.contains("CONTRATOS DE LOCACION") || d.contains("CONTRATOS DE LOCACIÓN") || d.contains("(ICL)") {
+            if let Some(id) = campo(item, &["idVariable", "IdVariable", "id_variable"]).and_then(|v| v.as_i64()) {
+                return Ok(id);
+            }
+        }
+    }
+    Err("No se encontró la variable ICL en el listado del BCRA".to_string())
 }
 
 /// Valor de la serie en la fecha pedida, o el mas reciente disponible antes de
@@ -68,19 +114,34 @@ pub async fn id_variable_icl(client: &reqwest::Client) -> Result<i64, String> {
 pub async fn valor_en_o_antes(client: &reqwest::Client, id_variable: i64, fecha: NaiveDate) -> Result<DatoSerie, String> {
     let desde = fecha - chrono::Duration::days(20);
     let url = format!("{}/{}", BASE_URL, id_variable);
-    let resp = client
-        .get(&url)
-        .query(&[
-            ("desde", desde.format("%Y-%m-%d").to_string()),
-            ("hasta", fecha.format("%Y-%m-%d").to_string()),
-        ])
-        .send()
-        .await
-        .map_err(error_conexion)?;
-    let resp = resp.error_for_status().map_err(error_conexion)?;
-    let data: SerieResponse = resp.json().await.map_err(error_conexion)?;
-    data.results
-        .into_iter()
-        .max_by(|a, b| a.fecha.cmp(&b.fecha))
-        .ok_or_else(|| format!("No se encontraron valores de ICL cerca del {}", fecha.format("%d/%m/%Y")))
+    let query = [
+        ("desde", desde.format("%Y-%m-%d").to_string()),
+        ("hasta", fecha.format("%Y-%m-%d").to_string()),
+    ];
+    let data = fetch_json(client, &url, &query).await?;
+    let resultados = extraer_resultados(&data).ok_or_else(|| {
+        format!(
+            "No se reconoció el formato de la serie de ICL del BCRA. Respuesta: {}",
+            truncar(&data.to_string())
+        )
+    })?;
+
+    let mut mejor: Option<DatoSerie> = None;
+    for item in resultados {
+        let fecha_item = campo_texto(item, &["fecha", "Fecha"]);
+        let valor_item = campo_numero(item, &["valor", "Valor"]);
+        if let (Some(f), Some(v)) = (fecha_item, valor_item) {
+            let es_mejor = mejor.as_ref().map(|m| f > m.fecha).unwrap_or(true);
+            if es_mejor {
+                mejor = Some(DatoSerie { fecha: f, valor: v });
+            }
+        }
+    }
+    mejor.ok_or_else(|| {
+        format!(
+            "No se encontraron valores de ICL cerca del {}. Respuesta: {}",
+            fecha.format("%d/%m/%Y"),
+            truncar(&data.to_string())
+        )
+    })
 }
