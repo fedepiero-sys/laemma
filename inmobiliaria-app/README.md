@@ -5,10 +5,11 @@ garantes, inmuebles, contratos, ingresos (recibos de alquiler) y egresos
 (comprobantes de comisión), con un tablero de control de deudas y
 vencimientos.
 
-Hecho con [Tauri](https://tauri.app) (Rust + WebView del sistema) y una base
-de datos Postgres compartida (pensada para [Supabase](https://supabase.com),
-aunque funciona contra cualquier Postgres). Todas las PCs que se conecten al
-mismo proyecto ven y cargan los mismos datos.
+Hecho con [Tauri](https://tauri.app) (Rust + WebView del sistema) y
+[Supabase](https://supabase.com) como base de datos compartida, a la que se
+conecta por su **API REST** (igual que cualquier app hecha con el cliente
+`supabase-js`) en vez de abrir una conexión directa a Postgres. Todas las
+PCs que se conecten al mismo proyecto ven y cargan los mismos datos.
 
 ## Qué incluye
 
@@ -40,36 +41,34 @@ mismo proyecto ven y cargan los mismos datos.
 
 ## Varias personas, varias PCs
 
-La primera vez que se abre la app en una PC, pide el connection string de
-Postgres (ver "Puesta en marcha con Supabase" abajo) y lo guarda en
-`%APPDATA%\com.inmobiliaria.app\conexion.json`. Cualquier PC que se conecte
-con el mismo connection string ve y carga los mismos contratos, pagos,
+La primera vez que se abre la app en una PC, pide la URL del proyecto de
+Supabase y la clave "anon" (ver "Puesta en marcha con Supabase" abajo) y las
+guarda en `%APPDATA%\com.inmobiliaria.app\conexion.json`. Cualquier PC que
+se conecte con los mismos datos ve y carga los mismos contratos, pagos,
 usuarios, etc. — no hace falta configurar nada más por PC.
 
 ## Puesta en marcha con Supabase
 
 1. Crear una cuenta y un proyecto gratis en [supabase.com](https://supabase.com).
-2. En el proyecto, ir a **Connect → ORM** y copiar el valor de `DIRECT_URL`
-   (connection string del **pooler en modo sesión**, puerto `5432`, host
-   terminado en `pooler.supabase.com`). **No usar**:
-   - la pestaña "Direct connection": esa conexión es IPv6-only en el plan
-     gratis, y muchas redes (incluidas varias de Argentina) no tienen salida
-     IPv6;
-   - el `DATABASE_URL` (pooler en modo **transacción**, puerto `6543`, con
-     `?pgbouncer=true`): no soporta bien las consultas preparadas que usa
-     esta app, puede dar errores intermitentes raros bajo uso concurrente.
-3. Pegar ese string en la app la primera vez que se abra en cada PC. El
-   esquema de tablas se crea solo en el primer connect — no hace falta
-   correr ningún SQL a mano.
-4. El primer usuario que se crea queda disponible para cualquier otra PC que
-   se conecte después con el mismo string; desde la sección "Usuarios" se
+2. Ir a **SQL Editor** → **New query**, pegar el contenido de
+   [`supabase-schema.sql`](./supabase-schema.sql) (en la raíz del
+   repositorio) y correrlo. Crea las tablas que usa la app y les da permiso
+   a la clave "anon" — es el único paso manual, se hace una sola vez por
+   proyecto, no por PC.
+3. Ir a **Settings → API** y copiar la **Project URL** y la clave
+   **anon public** (no la `service_role`, que tiene permisos de
+   administrador y no debería viajar en un instalador).
+4. Pegar esos dos datos en la app la primera vez que se abra en cada PC.
+5. El primer usuario que se crea queda disponible para cualquier otra PC que
+   se conecte después con los mismos datos; desde la sección "Usuarios" se
    pueden cargar las cuentas de todo el equipo.
 
-El connection string incluye la contraseña de la base en texto plano — se
-guarda localmente en cada PC (no se sube a ningún lado), lo mismo que
-cualquier otro programa de escritorio que se conecta a una base remota. Si
-en algún momento se quiere invalidar el acceso, se puede rotar la
-contraseña desde el panel de Supabase (Settings → Database).
+La clave "anon" está pensada para viajar en el cliente (así la usa
+`supabase-js` en cualquier app web) — no es secreta en el mismo sentido que
+una contraseña de base de datos. Como el proyecto no usa Row Level Security
+(ver `supabase-schema.sql`), cualquiera que tenga esa clave y la URL puede
+leer y escribir datos; si en algún momento hace falta revocar el acceso, se
+puede rotar la clave desde el panel de Supabase (Settings → API).
 
 ## Requisitos para compilar
 
@@ -96,10 +95,10 @@ Al finalizar, los instaladores quedan en:
 - `src-tauri/target/release/bundle/msi/Inmobiliaria App_0.1.0_x64_en-US.msi`
 
 Cualquiera de los dos instala el programa normalmente en la PC (acceso
-directo, desinstalador, etc.). Los datos viven en Postgres (Supabase), no en
-la PC, así que reinstalar o actualizar la aplicación no los afecta; lo único
-que queda guardado localmente es el connection string de conexión (ver
-"Varias personas, varias PCs").
+directo, desinstalador, etc.). Los datos viven en Supabase, no en la PC, así
+que reinstalar o actualizar la aplicación no los afecta; lo único que queda
+guardado localmente son la URL y la clave de conexión (ver "Varias personas,
+varias PCs").
 
 ## Desarrollo
 
@@ -109,16 +108,20 @@ npm run tauri dev
 ```
 
 Esto abre la aplicación en una ventana con recarga automática del frontend
-(`src/`). El código de la base de datos y la lógica de negocio están en
-`src-tauri/src/` (Rust): `db.rs` (esquema Postgres y conexión), `models.rs`
-(estructuras de datos) y `commands.rs` (comandos que usa la interfaz,
-incluyendo el cálculo de mora, montos vigentes y el tablero de control).
+(`src/`). El código está en `src-tauri/src/` (Rust): `supabase.rs` (cliente
+REST contra PostgREST), `config.rs` (guardar/leer la URL y clave de
+conexión), `models.rs` (estructuras de datos) y `commands.rs` (comandos que
+usa la interfaz, incluyendo el cálculo de mora, montos vigentes y el
+tablero de control).
 
 `commands.rs` incluye un test de integración (`cargo test --lib
-tests_postgres`) que corre contra un Postgres real y valida el esquema y las
-consultas más sensibles (altas con `RETURNING`, `ON CONFLICT`, joins del
-contrato, numeración secuencial, violación de usuario único). Se salta solo
-si no está definida la variable `TEST_DATABASE_URL`.
+tests_rest`) que corre contra un PostgREST real y valida el cliente REST y
+la lógica de negocio más sensible (altas con `Prefer: return=representation`,
+upsert con `ignore-duplicates`, joins anidados del contrato, numeración
+secuencial, violación de usuario único, `DELETE` restringido por clave
+foránea). Se salta solo si no están definidas las variables
+`TEST_SUPABASE_URL` y `TEST_SUPABASE_ANON_KEY` (apuntando a un PostgREST de
+prueba, no al proyecto real).
 
 ## Notas sobre el cálculo de mora y actualizaciones
 

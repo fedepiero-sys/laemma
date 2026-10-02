@@ -214,13 +214,17 @@
         <h1>Conectar con la base de datos</h1>
       </div>
       <p class="login-subtitle">
-        Pegá acá el connection string de Postgres (Supabase → Connect → ORM → DIRECT_URL, el del pooler puerto 5432).
-        Es el mismo para todas las PCs que van a compartir los mismos datos — pedíselo a quien armó la cuenta si no lo tenés.
+        Pegá acá los datos de Supabase → Settings → API: la "Project URL" y la clave "anon public".
+        Son los mismos para todas las PCs que van a compartir los mismos datos — pedíselos a quien armó la cuenta si no los tenés.
       </p>
       <form id="conexion-form">
         <div class="form-field">
-          <label>Connection string</label>
-          <textarea id="conexion-string" rows="3" placeholder="postgresql://usuario:contraseña@host:puerto/postgres" required></textarea>
+          <label>Project URL</label>
+          <input type="text" id="conexion-url" placeholder="https://xxxxxxxx.supabase.co" required />
+        </div>
+        <div class="form-field">
+          <label>Clave anon public</label>
+          <textarea id="conexion-anon-key" rows="3" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." required></textarea>
         </div>
         <p class="login-error" id="conexion-error"></p>
         <button type="submit" class="btn-primary login-submit" id="conexion-submit">Conectar</button>

@@ -1,23 +1,34 @@
+use crate::config::SupabaseConfig;
 use crate::icl;
 use crate::models::*;
+use crate::supabase::{Cliente, ErrorSupabase, FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION};
 use chrono::{Datelike, NaiveDate};
-use deadpool_postgres::{Object, Pool};
+use serde::Deserialize;
+use serde_json::{json, Value};
 use tauri::{Manager, State};
 use tokio::sync::RwLock;
-use tokio_postgres::error::SqlState;
 
-pub struct DbState(pub RwLock<Option<Pool>>);
+pub struct DbState(pub RwLock<Option<Cliente>>);
 
 fn map_err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
-async fn obtener_conn(state: &DbState) -> Result<Object, String> {
-    let guard = state.0.read().await;
-    let pool = guard
-        .as_ref()
-        .ok_or_else(|| "La aplicación todavía no está conectada a la base de datos. Configurá la conexión primero.".to_string())?;
-    pool.get().await.map_err(|e| format!("No se pudo obtener una conexión a la base de datos: {}", e))
+/// Para deserializar la fila devuelta por un INSERT cuando solo hace falta
+/// el id (p.ej. contratos, que trae columnas que no están en el modelo
+/// `Contrato` usado por el frontend, como `garante_ids`).
+#[derive(Deserialize)]
+struct FilaId {
+    id: i64,
+}
+
+async fn obtener_cliente(state: &DbState) -> Result<Cliente, String> {
+    state
+        .0
+        .read()
+        .await
+        .clone()
+        .ok_or_else(|| "La aplicación todavía no está conectada a Supabase. Configurá la conexión primero.".to_string())
 }
 
 fn parse_date(s: &str) -> NaiveDate {
@@ -73,607 +84,520 @@ fn proxima_fecha_cumpleanos(nacimiento: NaiveDate, hoy: NaiveDate) -> NaiveDate 
     }
 }
 
-/// Monto de alquiler vigente a una fecha dada, segun la ultima actualizacion registrada.
-async fn monto_vigente(conn: &Object, contrato_id: i64, fecha: NaiveDate) -> Result<f64, String> {
-    let monto_inicial: f64 = conn
-        .query_one("SELECT monto_inicial FROM contratos WHERE id = $1", &[&contrato_id])
+#[derive(Debug, Deserialize, Clone)]
+struct ActualizacionBase {
+    fecha_vigencia: String,
+    monto_nuevo: f64,
+}
+
+/// Monto de alquiler vigente a una fecha dada, según la actualización
+/// registrada más reciente con vigencia en o antes de esa fecha.
+fn monto_vigente_de(actualizaciones: &[ActualizacionBase], monto_inicial: f64, fecha: NaiveDate) -> f64 {
+    actualizaciones
+        .iter()
+        .filter(|a| parse_date(&a.fecha_vigencia) <= fecha)
+        .max_by(|a, b| a.fecha_vigencia.cmp(&b.fecha_vigencia))
+        .map(|a| a.monto_nuevo)
+        .unwrap_or(monto_inicial)
+}
+
+/// Fecha de vigencia de la última actualización registrada (la más reciente,
+/// sin importar si es pasada o futura respecto de "hoy"), o la fecha de
+/// inicio del contrato si todavía no tuvo ninguna. Es el punto de referencia
+/// contra el que se mide la variación del índice para la próxima actualización.
+fn fecha_base_de(actualizaciones: &[ActualizacionBase], fecha_inicio: NaiveDate) -> NaiveDate {
+    actualizaciones
+        .iter()
+        .max_by(|a, b| a.fecha_vigencia.cmp(&b.fecha_vigencia))
+        .map(|a| parse_date(&a.fecha_vigencia))
+        .unwrap_or(fecha_inicio)
+}
+
+fn proxima_fecha_actualizacion_de(actualizaciones: &[ActualizacionBase], fecha_inicio: NaiveDate, frecuencia_meses: i64) -> NaiveDate {
+    add_months(fecha_base_de(actualizaciones, fecha_inicio), frecuencia_meses.max(1))
+}
+
+async fn actualizaciones_de(cliente: &Cliente, contrato_id: i64) -> Result<Vec<ActualizacionBase>, String> {
+    cliente
+        .select("actualizaciones", &format!("contrato_id=eq.{}&select=fecha_vigencia,monto_nuevo", contrato_id))
         .await
-        .map_err(map_err)?
-        .get(0);
-    let fecha_str = fecha.format("%Y-%m-%d").to_string();
-    let actualizado = conn
-        .query_opt(
-            "SELECT monto_nuevo FROM actualizaciones WHERE contrato_id = $1 AND fecha_vigencia <= $2 ORDER BY fecha_vigencia DESC LIMIT 1",
-            &[&contrato_id, &fecha_str],
+        .map_err(map_err)
+}
+
+// ---------- Conexión a Supabase ----------
+
+/// URL y clave "anon" de fábrica, incluidas en el instalador en tiempo de
+/// compilación (variables de entorno INMOBILIARIA_SUPABASE_URL e
+/// INMOBILIARIA_SUPABASE_ANON_KEY en el build de GitHub Actions). Permiten
+/// que la app venga lista para usar sin que la persona que la instala tenga
+/// que pegar ningún dato técnico. Si no están presentes (build local de
+/// desarrollo), la app pide los datos a mano la primera vez, como antes.
+const SUPABASE_URL_DE_FABRICA: Option<&str> = option_env!("INMOBILIARIA_SUPABASE_URL");
+const SUPABASE_ANON_KEY_DE_FABRICA: Option<&str> = option_env!("INMOBILIARIA_SUPABASE_ANON_KEY");
+
+async fn conectar_y_guardar(app: &tauri::AppHandle, state: &State<'_, DbState>, config: SupabaseConfig) -> Result<(), String> {
+    let cliente = Cliente::nuevo(&config);
+    cliente.probar().await.map_err(|e| {
+        format!(
+            "No se pudo conectar con Supabase. Verificá la URL, la clave y tu conexión a internet. Detalle: {}",
+            e
         )
-        .await
-        .map_err(map_err)?
-        .map(|r| r.get::<_, f64>(0));
-    Ok(actualizado.unwrap_or(monto_inicial))
+    })?;
+    let data_dir = app.path().app_data_dir().map_err(map_err)?;
+    std::fs::create_dir_all(&data_dir).map_err(map_err)?;
+    crate::config::guardar(&data_dir, &config)?;
+    *state.0.write().await = Some(cliente);
+    Ok(())
 }
 
-/// Fecha de vigencia de la ultima actualizacion registrada, o la fecha de
-/// inicio del contrato si todavia no tuvo ninguna. Es el punto de referencia
-/// contra el que se mide la variacion del indice para la proxima actualizacion.
-async fn fecha_base_actualizacion(conn: &Object, contrato_id: i64, fecha_inicio: NaiveDate) -> Result<NaiveDate, String> {
-    let ultima = conn
-        .query_opt(
-            "SELECT fecha_vigencia FROM actualizaciones WHERE contrato_id = $1 ORDER BY fecha_vigencia DESC LIMIT 1",
-            &[&contrato_id],
-        )
-        .await
-        .map_err(map_err)?
-        .map(|r| r.get::<_, String>(0));
-    Ok(match ultima {
-        Some(f) => parse_date(&f),
-        None => fecha_inicio,
-    })
-}
-
-async fn proxima_fecha_actualizacion(conn: &Object, contrato_id: i64, fecha_inicio: NaiveDate, frecuencia_meses: i64) -> Result<NaiveDate, String> {
-    let base = fecha_base_actualizacion(conn, contrato_id, fecha_inicio).await?;
-    Ok(add_months(base, frecuencia_meses.max(1)))
-}
-
-// ---------- Conexión a la base de datos ----------
-
-/// Connection string de fábrica, incluido en el instalador en tiempo de
-/// compilación (variable de entorno INMOBILIARIA_DB_URL en el build de
-/// GitHub Actions). Permite que la app venga lista para usar sin que la
-/// persona que la instala tenga que pegar ningún dato técnico. Si no está
-/// presente (build local de desarrollo), la app pide el connection string
-/// a mano la primera vez, como antes.
-const DB_URL_DE_FABRICA: Option<&str> = option_env!("INMOBILIARIA_DB_URL");
-
-/// true si ya hay una conexión activa, si existe una guardada de una sesión
-/// anterior y se pudo restablecer, o si se pudo conectar con el connection
-/// string de fábrica incluido en el instalador. false solo si hace falta
-/// pedirlo a mano (primera vez en un build sin connection string de fábrica).
+/// true si ya hay una conexión activa, si existe una configuración guardada
+/// de una sesión anterior y se pudo restablecer, o si se pudo conectar con
+/// los datos de fábrica incluidos en el instalador. false solo si hace falta
+/// pedirlos a mano (primera vez en un build sin datos de fábrica).
 #[tauri::command]
 pub async fn hay_configuracion_conexion(app: tauri::AppHandle, state: State<'_, DbState>) -> Result<bool, String> {
     if state.0.read().await.is_some() {
         return Ok(true);
     }
     let data_dir = app.path().app_data_dir().map_err(map_err)?;
-    if let Some(cs) = crate::db::leer_connection_string_guardado(&data_dir) {
-        let pool = crate::db::conectar(&cs).await?;
-        *state.0.write().await = Some(pool);
+    if let Some(config) = crate::config::leer_guardada(&data_dir) {
+        conectar_y_guardar(&app, &state, config).await?;
         return Ok(true);
     }
-    if let Some(cs) = DB_URL_DE_FABRICA {
-        let pool = crate::db::conectar(cs).await?;
-        std::fs::create_dir_all(&data_dir).map_err(map_err)?;
-        crate::db::guardar_connection_string(&data_dir, cs)?;
-        *state.0.write().await = Some(pool);
+    if let (Some(url), Some(anon_key)) = (SUPABASE_URL_DE_FABRICA, SUPABASE_ANON_KEY_DE_FABRICA) {
+        conectar_y_guardar(&app, &state, SupabaseConfig { url: url.to_string(), anon_key: anon_key.to_string() }).await?;
         return Ok(true);
     }
     Ok(false)
 }
 
 #[tauri::command]
-pub async fn configurar_conexion(app: tauri::AppHandle, state: State<'_, DbState>, connection_string: String) -> Result<(), String> {
-    let pool = crate::db::conectar(connection_string.trim()).await?;
-    let data_dir = app.path().app_data_dir().map_err(map_err)?;
-    std::fs::create_dir_all(&data_dir).map_err(map_err)?;
-    crate::db::guardar_connection_string(&data_dir, connection_string.trim())?;
-    *state.0.write().await = Some(pool);
-    Ok(())
+pub async fn configurar_conexion(app: tauri::AppHandle, state: State<'_, DbState>, url: String, anon_key: String) -> Result<(), String> {
+    let config = SupabaseConfig { url: crate::config::limpiar(&url), anon_key: crate::config::limpiar(&anon_key) };
+    conectar_y_guardar(&app, &state, config).await
 }
 
 // ---------- Propietarios ----------
 
 #[tauri::command]
 pub async fn get_propietarios(state: State<'_, DbState>) -> Result<Vec<Propietario>, String> {
-    let conn = obtener_conn(&state).await?;
-    let rows = conn
-        .query(
-            "SELECT id, nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, datos_bancarios, notas FROM propietarios ORDER BY nombre",
-            &[],
-        )
-        .await
-        .map_err(map_err)?;
-    Ok(rows
-        .iter()
-        .map(|r| Propietario {
-            id: Some(r.get(0)),
-            nombre: r.get(1),
-            dni_cuit: r.get(2),
-            fecha_nacimiento: r.get(3),
-            telefono: r.get(4),
-            email: r.get(5),
-            direccion: r.get(6),
-            datos_bancarios: r.get(7),
-            notas: r.get(8),
-        })
-        .collect())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.select("propietarios", "select=*&order=nombre").await.map_err(map_err)
 }
 
 #[tauri::command]
 pub async fn guardar_propietario(state: State<'_, DbState>, propietario: Propietario) -> Result<i64, String> {
-    let conn = obtener_conn(&state).await?;
+    let cliente = obtener_cliente(&state).await?;
+    let body = json!({
+        "nombre": propietario.nombre, "dni_cuit": propietario.dni_cuit, "fecha_nacimiento": propietario.fecha_nacimiento,
+        "telefono": propietario.telefono, "email": propietario.email, "direccion": propietario.direccion,
+        "datos_bancarios": propietario.datos_bancarios, "notas": propietario.notas,
+    });
     match propietario.id {
         Some(id) => {
-            conn.execute(
-                "UPDATE propietarios SET nombre=$1, dni_cuit=$2, fecha_nacimiento=$3, telefono=$4, email=$5, direccion=$6, datos_bancarios=$7, notas=$8 WHERE id=$9",
-                &[&propietario.nombre, &propietario.dni_cuit, &propietario.fecha_nacimiento, &propietario.telefono, &propietario.email, &propietario.direccion, &propietario.datos_bancarios, &propietario.notas, &id],
-            ).await.map_err(map_err)?;
+            cliente.update("propietarios", &format!("id=eq.{}", id), &body).await.map_err(map_err)?;
             Ok(id)
         }
         None => {
-            let fila = conn.query_one(
-                "INSERT INTO propietarios (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, datos_bancarios, notas) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
-                &[&propietario.nombre, &propietario.dni_cuit, &propietario.fecha_nacimiento, &propietario.telefono, &propietario.email, &propietario.direccion, &propietario.datos_bancarios, &propietario.notas],
-            ).await.map_err(map_err)?;
-            Ok(fila.get(0))
+            let fila: Propietario = cliente.insert("propietarios", &body).await.map_err(map_err)?;
+            Ok(fila.id.unwrap())
         }
     }
 }
 
 #[tauri::command]
 pub async fn eliminar_propietario(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = obtener_conn(&state).await?;
-    conn.execute("DELETE FROM propietarios WHERE id=$1", &[&id]).await.map_err(map_err)?;
-    Ok(())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.delete("propietarios", &format!("id=eq.{}", id)).await.map_err(mensaje_borrado_restringido("propietario"))
 }
 
 // ---------- Inquilinos ----------
 
 #[tauri::command]
 pub async fn get_inquilinos(state: State<'_, DbState>) -> Result<Vec<Inquilino>, String> {
-    let conn = obtener_conn(&state).await?;
-    let rows = conn
-        .query("SELECT id, nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, notas FROM inquilinos ORDER BY nombre", &[])
-        .await
-        .map_err(map_err)?;
-    Ok(rows
-        .iter()
-        .map(|r| Inquilino {
-            id: Some(r.get(0)),
-            nombre: r.get(1),
-            dni_cuit: r.get(2),
-            fecha_nacimiento: r.get(3),
-            telefono: r.get(4),
-            email: r.get(5),
-            direccion: r.get(6),
-            notas: r.get(7),
-        })
-        .collect())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.select("inquilinos", "select=*&order=nombre").await.map_err(map_err)
 }
 
 #[tauri::command]
 pub async fn guardar_inquilino(state: State<'_, DbState>, inquilino: Inquilino) -> Result<i64, String> {
-    let conn = obtener_conn(&state).await?;
+    let cliente = obtener_cliente(&state).await?;
+    let body = json!({
+        "nombre": inquilino.nombre, "dni_cuit": inquilino.dni_cuit, "fecha_nacimiento": inquilino.fecha_nacimiento,
+        "telefono": inquilino.telefono, "email": inquilino.email, "direccion": inquilino.direccion, "notas": inquilino.notas,
+    });
     match inquilino.id {
         Some(id) => {
-            conn.execute(
-                "UPDATE inquilinos SET nombre=$1, dni_cuit=$2, fecha_nacimiento=$3, telefono=$4, email=$5, direccion=$6, notas=$7 WHERE id=$8",
-                &[&inquilino.nombre, &inquilino.dni_cuit, &inquilino.fecha_nacimiento, &inquilino.telefono, &inquilino.email, &inquilino.direccion, &inquilino.notas, &id],
-            ).await.map_err(map_err)?;
+            cliente.update("inquilinos", &format!("id=eq.{}", id), &body).await.map_err(map_err)?;
             Ok(id)
         }
         None => {
-            let fila = conn.query_one(
-                "INSERT INTO inquilinos (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, notas) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
-                &[&inquilino.nombre, &inquilino.dni_cuit, &inquilino.fecha_nacimiento, &inquilino.telefono, &inquilino.email, &inquilino.direccion, &inquilino.notas],
-            ).await.map_err(map_err)?;
-            Ok(fila.get(0))
+            let fila: Inquilino = cliente.insert("inquilinos", &body).await.map_err(map_err)?;
+            Ok(fila.id.unwrap())
         }
     }
 }
 
 #[tauri::command]
 pub async fn eliminar_inquilino(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = obtener_conn(&state).await?;
-    conn.execute("DELETE FROM inquilinos WHERE id=$1", &[&id]).await.map_err(map_err)?;
-    Ok(())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.delete("inquilinos", &format!("id=eq.{}", id)).await.map_err(mensaje_borrado_restringido("inquilino"))
 }
 
 // ---------- Garantes ----------
 
 #[tauri::command]
 pub async fn get_garantes(state: State<'_, DbState>) -> Result<Vec<Garante>, String> {
-    let conn = obtener_conn(&state).await?;
-    let rows = conn
-        .query("SELECT id, nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, notas FROM garantes ORDER BY nombre", &[])
-        .await
-        .map_err(map_err)?;
-    Ok(rows
-        .iter()
-        .map(|r| Garante {
-            id: Some(r.get(0)),
-            nombre: r.get(1),
-            dni_cuit: r.get(2),
-            fecha_nacimiento: r.get(3),
-            telefono: r.get(4),
-            email: r.get(5),
-            direccion: r.get(6),
-            notas: r.get(7),
-        })
-        .collect())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.select("garantes", "select=*&order=nombre").await.map_err(map_err)
 }
 
 #[tauri::command]
 pub async fn guardar_garante(state: State<'_, DbState>, garante: Garante) -> Result<i64, String> {
-    let conn = obtener_conn(&state).await?;
+    let cliente = obtener_cliente(&state).await?;
+    let body = json!({
+        "nombre": garante.nombre, "dni_cuit": garante.dni_cuit, "fecha_nacimiento": garante.fecha_nacimiento,
+        "telefono": garante.telefono, "email": garante.email, "direccion": garante.direccion, "notas": garante.notas,
+    });
     match garante.id {
         Some(id) => {
-            conn.execute(
-                "UPDATE garantes SET nombre=$1, dni_cuit=$2, fecha_nacimiento=$3, telefono=$4, email=$5, direccion=$6, notas=$7 WHERE id=$8",
-                &[&garante.nombre, &garante.dni_cuit, &garante.fecha_nacimiento, &garante.telefono, &garante.email, &garante.direccion, &garante.notas, &id],
-            ).await.map_err(map_err)?;
+            cliente.update("garantes", &format!("id=eq.{}", id), &body).await.map_err(map_err)?;
             Ok(id)
         }
         None => {
-            let fila = conn.query_one(
-                "INSERT INTO garantes (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, notas) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
-                &[&garante.nombre, &garante.dni_cuit, &garante.fecha_nacimiento, &garante.telefono, &garante.email, &garante.direccion, &garante.notas],
-            ).await.map_err(map_err)?;
-            Ok(fila.get(0))
+            let fila: Garante = cliente.insert("garantes", &body).await.map_err(map_err)?;
+            Ok(fila.id.unwrap())
         }
     }
 }
 
 #[tauri::command]
 pub async fn eliminar_garante(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = obtener_conn(&state).await?;
-    conn.execute("DELETE FROM garantes WHERE id=$1", &[&id]).await.map_err(map_err)?;
-    Ok(())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.delete("garantes", &format!("id=eq.{}", id)).await.map_err(mensaje_borrado_restringido("garante"))
 }
 
 // ---------- Inmuebles ----------
 
+#[derive(Debug, Deserialize)]
+struct PropietarioNombre {
+    nombre: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct InmuebleEmbed {
+    id: i64,
+    propietario_id: i64,
+    direccion: String,
+    tipo: Option<String>,
+    superficie: Option<f64>,
+    ambientes: Option<i64>,
+    notas: Option<String>,
+    propietarios: PropietarioNombre,
+}
+
 #[tauri::command]
 pub async fn get_inmuebles(state: State<'_, DbState>) -> Result<Vec<InmuebleDetallado>, String> {
-    let conn = obtener_conn(&state).await?;
-    let rows = conn
-        .query(
-            "SELECT i.id, i.propietario_id, p.nombre, i.direccion, i.tipo, i.superficie, i.ambientes, i.notas
-             FROM inmuebles i JOIN propietarios p ON p.id = i.propietario_id
-             ORDER BY i.direccion",
-            &[],
-        )
+    let cliente = obtener_cliente(&state).await?;
+    let filas: Vec<InmuebleEmbed> = cliente
+        .select("inmuebles", "select=*,propietarios(nombre)&order=direccion")
         .await
         .map_err(map_err)?;
-    Ok(rows
-        .iter()
-        .map(|r| InmuebleDetallado {
-            id: r.get(0),
-            propietario_id: r.get(1),
-            propietario_nombre: r.get(2),
-            direccion: r.get(3),
-            tipo: r.get(4),
-            superficie: r.get(5),
-            ambientes: r.get(6),
-            notas: r.get(7),
+    Ok(filas
+        .into_iter()
+        .map(|i| InmuebleDetallado {
+            id: i.id,
+            propietario_id: i.propietario_id,
+            propietario_nombre: i.propietarios.nombre,
+            direccion: i.direccion,
+            tipo: i.tipo,
+            superficie: i.superficie,
+            ambientes: i.ambientes,
+            notas: i.notas,
         })
         .collect())
 }
 
 #[tauri::command]
 pub async fn guardar_inmueble(state: State<'_, DbState>, inmueble: Inmueble) -> Result<i64, String> {
-    let conn = obtener_conn(&state).await?;
+    let cliente = obtener_cliente(&state).await?;
+    let body = json!({
+        "propietario_id": inmueble.propietario_id, "direccion": inmueble.direccion, "tipo": inmueble.tipo,
+        "superficie": inmueble.superficie, "ambientes": inmueble.ambientes, "notas": inmueble.notas,
+    });
     match inmueble.id {
         Some(id) => {
-            conn.execute(
-                "UPDATE inmuebles SET propietario_id=$1, direccion=$2, tipo=$3, superficie=$4, ambientes=$5, notas=$6 WHERE id=$7",
-                &[&inmueble.propietario_id, &inmueble.direccion, &inmueble.tipo, &inmueble.superficie, &inmueble.ambientes, &inmueble.notas, &id],
-            ).await.map_err(map_err)?;
+            cliente.update("inmuebles", &format!("id=eq.{}", id), &body).await.map_err(map_err)?;
             Ok(id)
         }
         None => {
-            let fila = conn.query_one(
-                "INSERT INTO inmuebles (propietario_id, direccion, tipo, superficie, ambientes, notas) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
-                &[&inmueble.propietario_id, &inmueble.direccion, &inmueble.tipo, &inmueble.superficie, &inmueble.ambientes, &inmueble.notas],
-            ).await.map_err(map_err)?;
-            Ok(fila.get(0))
+            let fila: Inmueble = cliente.insert("inmuebles", &body).await.map_err(map_err)?;
+            Ok(fila.id.unwrap())
         }
     }
 }
 
 #[tauri::command]
 pub async fn eliminar_inmueble(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = obtener_conn(&state).await?;
-    conn.execute("DELETE FROM inmuebles WHERE id=$1", &[&id]).await.map_err(map_err)?;
-    Ok(())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.delete("inmuebles", &format!("id=eq.{}", id)).await.map_err(mensaje_borrado_restringido("inmueble"))
 }
 
 // ---------- Contratos ----------
 
-async fn cargar_garantes_de(conn: &Object, contrato_id: i64) -> Result<Vec<String>, String> {
-    let rows = conn
-        .query(
-            "SELECT g.nombre FROM contrato_garantes cg JOIN garantes g ON g.id = cg.garante_id WHERE cg.contrato_id = $1 ORDER BY g.nombre",
-            &[&contrato_id],
-        )
-        .await
-        .map_err(map_err)?;
-    Ok(rows.iter().map(|r| r.get::<_, String>(0)).collect())
+#[derive(Debug, Deserialize)]
+struct InquilinoNombre {
+    nombre: String,
 }
 
-async fn cargar_garante_ids_de(conn: &Object, contrato_id: i64) -> Result<Vec<i64>, String> {
-    let rows = conn
-        .query("SELECT garante_id FROM contrato_garantes WHERE contrato_id = $1", &[&contrato_id])
-        .await
-        .map_err(map_err)?;
-    Ok(rows.iter().map(|r| r.get::<_, i64>(0)).collect())
+#[derive(Debug, Deserialize)]
+struct GaranteEmbed {
+    id: i64,
+    nombre: String,
 }
 
-async fn construir_contrato_detallado(conn: &Object, id: i64) -> Result<ContratoDetallado, String> {
-    let r = conn
-        .query_one(
-            "SELECT c.id, c.inmueble_id, im.direccion, c.inquilino_id, iq.nombre, im.propietario_id, p.nombre,
-                    c.fecha_inicio, c.fecha_fin, c.dia_pago, c.monto_inicial, c.comision_porcentaje, c.tasa_mora_diaria,
-                    c.frecuencia_actualizacion_meses, c.tipo_actualizacion, c.porcentaje_actualizacion, c.estado, c.notas
-             FROM contratos c
-             JOIN inmuebles im ON im.id = c.inmueble_id
-             JOIN propietarios p ON p.id = im.propietario_id
-             JOIN inquilinos iq ON iq.id = c.inquilino_id
-             WHERE c.id = $1",
-            &[&id],
-        )
-        .await
-        .map_err(map_err)?;
+#[derive(Debug, Deserialize)]
+struct ContratoGaranteEmbed {
+    garantes: GaranteEmbed,
+}
 
-    let cid: i64 = r.get(0);
-    let inmueble_id: i64 = r.get(1);
-    let inmueble_direccion: String = r.get(2);
-    let inquilino_id: i64 = r.get(3);
-    let inquilino_nombre: String = r.get(4);
-    let propietario_id: i64 = r.get(5);
-    let propietario_nombre: String = r.get(6);
-    let fecha_inicio: String = r.get(7);
-    let fecha_fin: String = r.get(8);
-    let dia_pago: i64 = r.get(9);
-    let monto_inicial: f64 = r.get(10);
-    let comision_porcentaje: f64 = r.get(11);
-    let tasa_mora_diaria: f64 = r.get(12);
-    let frecuencia_actualizacion_meses: i64 = r.get(13);
-    let tipo_actualizacion: String = r.get(14);
-    let porcentaje_actualizacion: f64 = r.get(15);
-    let estado: String = r.get(16);
-    let notas: Option<String> = r.get(17);
+#[derive(Debug, Deserialize)]
+struct InmuebleDeContrato {
+    direccion: String,
+    propietario_id: i64,
+    propietarios: PropietarioNombre,
+}
 
-    let garantes = cargar_garantes_de(conn, cid).await?;
-    let garante_ids = cargar_garante_ids_de(conn, cid).await?;
-    let monto_vig = monto_vigente(conn, cid, today()).await?;
-    let proxima = proxima_fecha_actualizacion(conn, cid, parse_date(&fecha_inicio), frecuencia_actualizacion_meses).await?;
+#[derive(Debug, Deserialize)]
+struct ContratoEmbed {
+    id: i64,
+    inmueble_id: i64,
+    inquilino_id: i64,
+    fecha_inicio: String,
+    fecha_fin: String,
+    dia_pago: i64,
+    monto_inicial: f64,
+    comision_porcentaje: f64,
+    tasa_mora_diaria: f64,
+    frecuencia_actualizacion_meses: i64,
+    tipo_actualizacion: String,
+    porcentaje_actualizacion: f64,
+    estado: String,
+    notas: Option<String>,
+    inmuebles: InmuebleDeContrato,
+    inquilinos: InquilinoNombre,
+    contrato_garantes: Vec<ContratoGaranteEmbed>,
+    actualizaciones: Vec<ActualizacionBase>,
+}
 
-    Ok(ContratoDetallado {
-        id: cid,
-        inmueble_id,
-        inmueble_direccion,
-        inquilino_id,
-        inquilino_nombre,
-        propietario_id,
-        propietario_nombre,
-        garantes,
-        garante_ids,
-        fecha_inicio,
-        fecha_fin,
-        dia_pago,
-        monto_inicial,
+const SELECT_CONTRATO_DETALLADO: &str = "select=*,inmuebles(direccion,propietario_id,propietarios(nombre)),inquilinos(nombre),contrato_garantes(garantes(id,nombre)),actualizaciones(fecha_vigencia,monto_nuevo)";
+
+fn contrato_embed_a_detallado(c: ContratoEmbed, hoy: NaiveDate) -> ContratoDetallado {
+    let fecha_inicio = parse_date(&c.fecha_inicio);
+    let monto_vig = monto_vigente_de(&c.actualizaciones, c.monto_inicial, hoy);
+    let proxima = proxima_fecha_actualizacion_de(&c.actualizaciones, fecha_inicio, c.frecuencia_actualizacion_meses);
+    let mut garantes: Vec<GaranteEmbed> = c.contrato_garantes.into_iter().map(|g| g.garantes).collect();
+    garantes.sort_by(|a, b| a.nombre.cmp(&b.nombre));
+    ContratoDetallado {
+        id: c.id,
+        inmueble_id: c.inmueble_id,
+        inmueble_direccion: c.inmuebles.direccion,
+        inquilino_id: c.inquilino_id,
+        inquilino_nombre: c.inquilinos.nombre,
+        propietario_id: c.inmuebles.propietario_id,
+        propietario_nombre: c.inmuebles.propietarios.nombre,
+        garantes: garantes.iter().map(|g| g.nombre.clone()).collect(),
+        garante_ids: garantes.iter().map(|g| g.id).collect(),
+        fecha_inicio: c.fecha_inicio,
+        fecha_fin: c.fecha_fin,
+        dia_pago: c.dia_pago,
+        monto_inicial: c.monto_inicial,
         monto_vigente: monto_vig,
-        comision_porcentaje,
-        tasa_mora_diaria,
-        frecuencia_actualizacion_meses,
-        tipo_actualizacion,
-        porcentaje_actualizacion,
+        comision_porcentaje: c.comision_porcentaje,
+        tasa_mora_diaria: c.tasa_mora_diaria,
+        frecuencia_actualizacion_meses: c.frecuencia_actualizacion_meses,
+        tipo_actualizacion: c.tipo_actualizacion,
+        porcentaje_actualizacion: c.porcentaje_actualizacion,
         proxima_actualizacion: Some(proxima.format("%Y-%m-%d").to_string()),
-        estado,
-        notas,
-    })
+        estado: c.estado,
+        notas: c.notas,
+    }
 }
 
 #[tauri::command]
 pub async fn get_contratos(state: State<'_, DbState>) -> Result<Vec<ContratoDetallado>, String> {
-    let conn = obtener_conn(&state).await?;
-    let rows = conn.query("SELECT id FROM contratos ORDER BY fecha_fin", &[]).await.map_err(map_err)?;
-    let ids: Vec<i64> = rows.iter().map(|r| r.get(0)).collect();
-    let mut resultado = Vec::with_capacity(ids.len());
-    for id in ids {
-        resultado.push(construir_contrato_detallado(&conn, id).await?);
-    }
-    Ok(resultado)
+    let cliente = obtener_cliente(&state).await?;
+    let filas: Vec<ContratoEmbed> = cliente
+        .select("contratos", &format!("{}&order=fecha_fin", SELECT_CONTRATO_DETALLADO))
+        .await
+        .map_err(map_err)?;
+    let hoy = today();
+    Ok(filas.into_iter().map(|c| contrato_embed_a_detallado(c, hoy)).collect())
 }
 
 #[tauri::command]
 pub async fn guardar_contrato(state: State<'_, DbState>, contrato: Contrato) -> Result<i64, String> {
-    let conn = obtener_conn(&state).await?;
+    let cliente = obtener_cliente(&state).await?;
+    let body = json!({
+        "inmueble_id": contrato.inmueble_id, "inquilino_id": contrato.inquilino_id,
+        "fecha_inicio": contrato.fecha_inicio, "fecha_fin": contrato.fecha_fin, "dia_pago": contrato.dia_pago,
+        "monto_inicial": contrato.monto_inicial, "comision_porcentaje": contrato.comision_porcentaje,
+        "tasa_mora_diaria": contrato.tasa_mora_diaria, "frecuencia_actualizacion_meses": contrato.frecuencia_actualizacion_meses,
+        "tipo_actualizacion": contrato.tipo_actualizacion, "porcentaje_actualizacion": contrato.porcentaje_actualizacion,
+        "estado": contrato.estado, "notas": contrato.notas,
+    });
     let id = match contrato.id {
         Some(id) => {
-            conn.execute(
-                "UPDATE contratos SET inmueble_id=$1, inquilino_id=$2, fecha_inicio=$3, fecha_fin=$4, dia_pago=$5,
-                 monto_inicial=$6, comision_porcentaje=$7, tasa_mora_diaria=$8, frecuencia_actualizacion_meses=$9,
-                 tipo_actualizacion=$10, porcentaje_actualizacion=$11, estado=$12, notas=$13 WHERE id=$14",
-                &[&contrato.inmueble_id, &contrato.inquilino_id, &contrato.fecha_inicio, &contrato.fecha_fin,
-                    &contrato.dia_pago, &contrato.monto_inicial, &contrato.comision_porcentaje, &contrato.tasa_mora_diaria,
-                    &contrato.frecuencia_actualizacion_meses, &contrato.tipo_actualizacion, &contrato.porcentaje_actualizacion,
-                    &contrato.estado, &contrato.notas, &id],
-            ).await.map_err(map_err)?;
-            conn.execute("DELETE FROM contrato_garantes WHERE contrato_id=$1", &[&id]).await.map_err(map_err)?;
+            cliente.update("contratos", &format!("id=eq.{}", id), &body).await.map_err(map_err)?;
+            cliente.delete("contrato_garantes", &format!("contrato_id=eq.{}", id)).await.map_err(map_err)?;
             id
         }
         None => {
-            let fila = conn.query_one(
-                "INSERT INTO contratos (inmueble_id, inquilino_id, fecha_inicio, fecha_fin, dia_pago, monto_inicial,
-                 comision_porcentaje, tasa_mora_diaria, frecuencia_actualizacion_meses, tipo_actualizacion,
-                 porcentaje_actualizacion, estado, notas) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id",
-                &[&contrato.inmueble_id, &contrato.inquilino_id, &contrato.fecha_inicio, &contrato.fecha_fin,
-                    &contrato.dia_pago, &contrato.monto_inicial, &contrato.comision_porcentaje, &contrato.tasa_mora_diaria,
-                    &contrato.frecuencia_actualizacion_meses, &contrato.tipo_actualizacion, &contrato.porcentaje_actualizacion,
-                    &contrato.estado, &contrato.notas],
-            ).await.map_err(map_err)?;
-            fila.get(0)
+            let fila: FilaId = cliente.insert("contratos", &body).await.map_err(map_err)?;
+            fila.id
         }
     };
     for garante_id in contrato.garante_ids {
-        conn.execute(
-            "INSERT INTO contrato_garantes (contrato_id, garante_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-            &[&id, &garante_id],
-        ).await.map_err(map_err)?;
+        cliente
+            .insert_ignorando_conflicto("contrato_garantes", &json!({"contrato_id": id, "garante_id": garante_id}), "contrato_id,garante_id")
+            .await
+            .map_err(map_err)?;
     }
     Ok(id)
 }
 
 #[tauri::command]
 pub async fn eliminar_contrato(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = obtener_conn(&state).await?;
-    conn.execute("DELETE FROM contratos WHERE id=$1", &[&id]).await.map_err(map_err)?;
-    Ok(())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.delete("contratos", &format!("id=eq.{}", id)).await.map_err(mensaje_borrado_restringido("contrato"))
 }
 
 // ---------- Actualizaciones de alquiler ----------
 
 #[tauri::command]
 pub async fn get_actualizaciones(state: State<'_, DbState>, contrato_id: i64) -> Result<Vec<Actualizacion>, String> {
-    let conn = obtener_conn(&state).await?;
-    let rows = conn
-        .query(
-            "SELECT id, contrato_id, fecha_vigencia, monto_nuevo, motivo FROM actualizaciones WHERE contrato_id=$1 ORDER BY fecha_vigencia DESC",
-            &[&contrato_id],
-        )
+    let cliente = obtener_cliente(&state).await?;
+    cliente
+        .select("actualizaciones", &format!("contrato_id=eq.{}&select=*&order=fecha_vigencia.desc", contrato_id))
         .await
-        .map_err(map_err)?;
-    Ok(rows
-        .iter()
-        .map(|r| Actualizacion {
-            id: Some(r.get(0)),
-            contrato_id: r.get(1),
-            fecha_vigencia: r.get(2),
-            monto_nuevo: r.get(3),
-            motivo: r.get(4),
-        })
-        .collect())
+        .map_err(map_err)
 }
 
 #[tauri::command]
 pub async fn agregar_actualizacion(state: State<'_, DbState>, actualizacion: Actualizacion) -> Result<i64, String> {
-    let conn = obtener_conn(&state).await?;
-    let fila = conn.query_one(
-        "INSERT INTO actualizaciones (contrato_id, fecha_vigencia, monto_nuevo, motivo) VALUES ($1,$2,$3,$4) RETURNING id",
-        &[&actualizacion.contrato_id, &actualizacion.fecha_vigencia, &actualizacion.monto_nuevo, &actualizacion.motivo],
-    ).await.map_err(map_err)?;
-    Ok(fila.get(0))
+    let cliente = obtener_cliente(&state).await?;
+    let body = json!({
+        "contrato_id": actualizacion.contrato_id, "fecha_vigencia": actualizacion.fecha_vigencia,
+        "monto_nuevo": actualizacion.monto_nuevo, "motivo": actualizacion.motivo,
+    });
+    let fila: Actualizacion = cliente.insert("actualizaciones", &body).await.map_err(map_err)?;
+    Ok(fila.id.unwrap())
 }
 
 #[tauri::command]
 pub async fn eliminar_actualizacion(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = obtener_conn(&state).await?;
-    conn.execute("DELETE FROM actualizaciones WHERE id=$1", &[&id]).await.map_err(map_err)?;
-    Ok(())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.delete("actualizaciones", &format!("id=eq.{}", id)).await.map_err(map_err)
 }
 
 // ---------- Ingresos (pagos de inquilinos / recibos) ----------
 
 #[tauri::command]
 pub async fn get_pagos(state: State<'_, DbState>) -> Result<Vec<Pago>, String> {
-    let conn = obtener_conn(&state).await?;
-    let rows = conn
-        .query(
-            "SELECT id, contrato_id, periodo, fecha_pago, monto_alquiler, dias_mora, monto_mora, monto_total, metodo_pago, numero_recibo, notas FROM pagos ORDER BY fecha_pago DESC",
-            &[],
-        )
-        .await
-        .map_err(map_err)?;
-    Ok(rows
-        .iter()
-        .map(|r| Pago {
-            id: r.get(0),
-            contrato_id: r.get(1),
-            periodo: r.get(2),
-            fecha_pago: r.get(3),
-            monto_alquiler: r.get(4),
-            dias_mora: r.get(5),
-            monto_mora: r.get(6),
-            monto_total: r.get(7),
-            metodo_pago: r.get(8),
-            numero_recibo: r.get(9),
-            notas: r.get(10),
-        })
-        .collect())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.select("pagos", "select=*&order=fecha_pago.desc").await.map_err(map_err)
+}
+
+#[derive(Debug, Deserialize)]
+struct ContratoParaPago {
+    dia_pago: i64,
+    tasa_mora_diaria: f64,
+    monto_inicial: f64,
 }
 
 #[tauri::command]
 pub async fn registrar_pago(state: State<'_, DbState>, nuevo: NuevoPago) -> Result<i64, String> {
-    let conn = obtener_conn(&state).await?;
-    let fila_contrato = conn
-        .query_one("SELECT dia_pago, tasa_mora_diaria FROM contratos WHERE id=$1", &[&nuevo.contrato_id])
-        .await
-        .map_err(map_err)?;
-    let dia_pago: i64 = fila_contrato.get(0);
-    let tasa_mora_diaria: f64 = fila_contrato.get(1);
-
-    let fecha_pago = parse_date(&nuevo.fecha_pago);
-    let vencimiento = due_date_for_periodo(&nuevo.periodo, dia_pago);
-    let monto_alquiler = monto_vigente(&conn, nuevo.contrato_id, vencimiento).await?;
-    let dias_mora = (fecha_pago - vencimiento).num_days().max(0);
-    let monto_mora = monto_alquiler * (tasa_mora_diaria / 100.0) * dias_mora as f64;
-    let monto_total = monto_alquiler + monto_mora;
-
-    let numero_recibo: i64 = conn
-        .query_one("SELECT COALESCE(MAX(numero_recibo),0)+1 FROM pagos", &[])
+    let cliente = obtener_cliente(&state).await?;
+    let contrato: ContratoParaPago = cliente
+        .select_uno("contratos", &format!("id=eq.{}&select=dia_pago,tasa_mora_diaria,monto_inicial", nuevo.contrato_id))
         .await
         .map_err(map_err)?
-        .get(0);
+        .ok_or_else(|| "El contrato no existe".to_string())?;
+    let actualizaciones = actualizaciones_de(&cliente, nuevo.contrato_id).await?;
 
-    let fila = conn.query_one(
-        "INSERT INTO pagos (contrato_id, periodo, fecha_pago, monto_alquiler, dias_mora, monto_mora, monto_total, metodo_pago, numero_recibo, notas)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
-        &[&nuevo.contrato_id, &nuevo.periodo, &nuevo.fecha_pago, &monto_alquiler, &dias_mora, &monto_mora, &monto_total, &nuevo.metodo_pago, &numero_recibo, &nuevo.notas],
-    ).await.map_err(map_err)?;
-    Ok(fila.get(0))
+    let fecha_pago = parse_date(&nuevo.fecha_pago);
+    let vencimiento = due_date_for_periodo(&nuevo.periodo, contrato.dia_pago);
+    let monto_alquiler = monto_vigente_de(&actualizaciones, contrato.monto_inicial, vencimiento);
+    let dias_mora = (fecha_pago - vencimiento).num_days().max(0);
+    let monto_mora = monto_alquiler * (contrato.tasa_mora_diaria / 100.0) * dias_mora as f64;
+    let monto_total = monto_alquiler + monto_mora;
+
+    let numero_recibo = siguiente_numero(&cliente, "pagos", "numero_recibo").await?;
+
+    let body = json!({
+        "contrato_id": nuevo.contrato_id, "periodo": nuevo.periodo, "fecha_pago": nuevo.fecha_pago,
+        "monto_alquiler": monto_alquiler, "dias_mora": dias_mora, "monto_mora": monto_mora, "monto_total": monto_total,
+        "metodo_pago": nuevo.metodo_pago, "numero_recibo": numero_recibo, "notas": nuevo.notas,
+    });
+    let fila: Pago = cliente.insert("pagos", &body).await.map_err(map_err)?;
+    Ok(fila.id)
+}
+
+/// Siguiente valor para una columna de numeración secuencial (equivalente a
+/// `COALESCE(MAX(columna),0)+1`), para numerar recibos y comprobantes.
+async fn siguiente_numero(cliente: &Cliente, tabla: &str, columna: &str) -> Result<i64, String> {
+    #[derive(Deserialize)]
+    struct Fila {
+        #[serde(flatten)]
+        valor: std::collections::HashMap<String, i64>,
+    }
+    let filas: Vec<Fila> = cliente
+        .select(tabla, &format!("select={}&order={}.desc&limit=1", columna, columna))
+        .await
+        .map_err(map_err)?;
+    Ok(filas.first().and_then(|f| f.valor.get(columna)).copied().unwrap_or(0) + 1)
 }
 
 #[tauri::command]
 pub async fn eliminar_pago(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = obtener_conn(&state).await?;
-    conn.execute("DELETE FROM liquidaciones WHERE pago_id=$1", &[&id]).await.map_err(map_err)?;
-    conn.execute("DELETE FROM pagos WHERE id=$1", &[&id]).await.map_err(map_err)?;
+    let cliente = obtener_cliente(&state).await?;
+    cliente.delete("liquidaciones", &format!("pago_id=eq.{}", id)).await.map_err(map_err)?;
+    cliente.delete("pagos", &format!("id=eq.{}", id)).await.map_err(map_err)?;
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct ContratoDePago {
+    inquilinos: InquilinoNombre,
+    inmuebles: InmuebleDeContratoSimple,
+}
+
+#[derive(Debug, Deserialize)]
+struct InmuebleDeContratoSimple {
+    direccion: String,
+    propietarios: PropietarioNombre,
+}
+
+#[derive(Debug, Deserialize)]
+struct PagoEmbed {
+    #[serde(flatten)]
+    pago: Pago,
+    contratos: ContratoDePago,
 }
 
 #[tauri::command]
 pub async fn get_recibo(state: State<'_, DbState>, pago_id: i64) -> Result<ReciboCompleto, String> {
-    let conn = obtener_conn(&state).await?;
-    let r = conn
-        .query_one(
-            "SELECT id, contrato_id, periodo, fecha_pago, monto_alquiler, dias_mora, monto_mora, monto_total, metodo_pago, numero_recibo, notas FROM pagos WHERE id=$1",
-            &[&pago_id],
-        )
+    let cliente = obtener_cliente(&state).await?;
+    let fila: PagoEmbed = cliente
+        .select_uno("pagos", &format!("id=eq.{}&select=*,contratos(inquilinos(nombre),inmuebles(direccion,propietarios(nombre)))", pago_id))
         .await
-        .map_err(map_err)?;
-    let pago = Pago {
-        id: r.get(0),
-        contrato_id: r.get(1),
-        periodo: r.get(2),
-        fecha_pago: r.get(3),
-        monto_alquiler: r.get(4),
-        dias_mora: r.get(5),
-        monto_mora: r.get(6),
-        monto_total: r.get(7),
-        metodo_pago: r.get(8),
-        numero_recibo: r.get(9),
-        notas: r.get(10),
-    };
-
-    let r2 = conn
-        .query_one(
-            "SELECT iq.nombre, im.direccion, p.nombre
-             FROM contratos c
-             JOIN inquilinos iq ON iq.id = c.inquilino_id
-             JOIN inmuebles im ON im.id = c.inmueble_id
-             JOIN propietarios p ON p.id = im.propietario_id
-             WHERE c.id = $1",
-            &[&pago.contrato_id],
-        )
-        .await
-        .map_err(map_err)?;
-
+        .map_err(map_err)?
+        .ok_or_else(|| "El pago no existe".to_string())?;
     Ok(ReciboCompleto {
-        pago,
-        inquilino_nombre: r2.get(0),
-        inmueble_direccion: r2.get(1),
-        propietario_nombre: r2.get(2),
+        inquilino_nombre: fila.contratos.inquilinos.nombre,
+        inmueble_direccion: fila.contratos.inmuebles.direccion.clone(),
+        propietario_nombre: fila.contratos.inmuebles.propietarios.nombre,
+        pago: fila.pago,
     })
 }
 
@@ -681,209 +605,189 @@ pub async fn get_recibo(state: State<'_, DbState>, pago_id: i64) -> Result<Recib
 
 #[tauri::command]
 pub async fn get_liquidaciones(state: State<'_, DbState>) -> Result<Vec<Liquidacion>, String> {
-    let conn = obtener_conn(&state).await?;
-    let rows = conn
-        .query(
-            "SELECT id, pago_id, fecha, monto_alquiler, comision_porcentaje, monto_comision, monto_neto, numero_comprobante, notas FROM liquidaciones ORDER BY fecha DESC",
-            &[],
-        )
-        .await
-        .map_err(map_err)?;
-    Ok(rows
-        .iter()
-        .map(|r| Liquidacion {
-            id: r.get(0),
-            pago_id: r.get(1),
-            fecha: r.get(2),
-            monto_alquiler: r.get(3),
-            comision_porcentaje: r.get(4),
-            monto_comision: r.get(5),
-            monto_neto: r.get(6),
-            numero_comprobante: r.get(7),
-            notas: r.get(8),
-        })
-        .collect())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.select("liquidaciones", "select=*&order=fecha.desc").await.map_err(map_err)
+}
+
+#[derive(Debug, Deserialize)]
+struct PagoParaLiquidacion {
+    contrato_id: i64,
+    monto_alquiler: f64,
+    monto_total: f64,
 }
 
 #[tauri::command]
 pub async fn generar_liquidacion(state: State<'_, DbState>, pago_id: i64, comision_porcentaje: Option<f64>, fecha: String, notas: Option<String>) -> Result<i64, String> {
-    let conn = obtener_conn(&state).await?;
-    let fila_pago = conn
-        .query_one("SELECT contrato_id, monto_alquiler, monto_total FROM pagos WHERE id=$1", &[&pago_id])
+    let cliente = obtener_cliente(&state).await?;
+    let pago: PagoParaLiquidacion = cliente
+        .select_uno("pagos", &format!("id=eq.{}&select=contrato_id,monto_alquiler,monto_total", pago_id))
         .await
-        .map_err(map_err)?;
-    let contrato_id: i64 = fila_pago.get(0);
-    let monto_alquiler: f64 = fila_pago.get(1);
-    let monto_total: f64 = fila_pago.get(2);
+        .map_err(map_err)?
+        .ok_or_else(|| "El pago no existe".to_string())?;
 
-    let ya_existe = conn
-        .query_opt("SELECT id FROM liquidaciones WHERE pago_id=$1", &[&pago_id])
-        .await
-        .map_err(map_err)?;
+    let ya_existe: Option<Value> = cliente.select_uno("liquidaciones", &format!("pago_id=eq.{}&select=id", pago_id)).await.map_err(map_err)?;
     if ya_existe.is_some() {
         return Err("Este pago ya tiene un comprobante de liquidacion generado".to_string());
     }
 
     let comision_pct = match comision_porcentaje {
         Some(v) => v,
-        None => conn
-            .query_one("SELECT comision_porcentaje FROM contratos WHERE id=$1", &[&contrato_id])
-            .await
-            .map_err(map_err)?
-            .get(0),
+        None => {
+            #[derive(Deserialize)]
+            struct ComisionContrato {
+                comision_porcentaje: f64,
+            }
+            let c: ComisionContrato = cliente
+                .select_uno("contratos", &format!("id=eq.{}&select=comision_porcentaje", pago.contrato_id))
+                .await
+                .map_err(map_err)?
+                .ok_or_else(|| "El contrato no existe".to_string())?;
+            c.comision_porcentaje
+        }
     };
 
-    let monto_comision = monto_alquiler * (comision_pct / 100.0);
-    let monto_neto = monto_total - monto_comision;
+    let monto_comision = pago.monto_alquiler * (comision_pct / 100.0);
+    let monto_neto = pago.monto_total - monto_comision;
+    let numero_comprobante = siguiente_numero(&cliente, "liquidaciones", "numero_comprobante").await?;
 
-    let numero_comprobante: i64 = conn
-        .query_one("SELECT COALESCE(MAX(numero_comprobante),0)+1 FROM liquidaciones", &[])
-        .await
-        .map_err(map_err)?
-        .get(0);
-
-    let fila = conn.query_one(
-        "INSERT INTO liquidaciones (pago_id, fecha, monto_alquiler, comision_porcentaje, monto_comision, monto_neto, numero_comprobante, notas)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
-        &[&pago_id, &fecha, &monto_alquiler, &comision_pct, &monto_comision, &monto_neto, &numero_comprobante, &notas],
-    ).await.map_err(map_err)?;
-    Ok(fila.get(0))
+    let body = json!({
+        "pago_id": pago_id, "fecha": fecha, "monto_alquiler": pago.monto_alquiler, "comision_porcentaje": comision_pct,
+        "monto_comision": monto_comision, "monto_neto": monto_neto, "numero_comprobante": numero_comprobante, "notas": notas,
+    });
+    let fila: Liquidacion = cliente.insert("liquidaciones", &body).await.map_err(map_err)?;
+    Ok(fila.id)
 }
 
 #[tauri::command]
 pub async fn eliminar_liquidacion(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = obtener_conn(&state).await?;
-    conn.execute("DELETE FROM liquidaciones WHERE id=$1", &[&id]).await.map_err(map_err)?;
-    Ok(())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.delete("liquidaciones", &format!("id=eq.{}", id)).await.map_err(map_err)
+}
+
+#[derive(Debug, Deserialize)]
+struct PropietarioNombreYBanco {
+    nombre: String,
+    datos_bancarios: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InmuebleDeLiquidacion {
+    direccion: String,
+    propietarios: PropietarioNombreYBanco,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContratoDeLiquidacion {
+    inquilinos: InquilinoNombre,
+    inmuebles: InmuebleDeLiquidacion,
+}
+
+#[derive(Debug, Deserialize)]
+struct PagoDeLiquidacion {
+    periodo: String,
+    contratos: ContratoDeLiquidacion,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiquidacionEmbed {
+    #[serde(flatten)]
+    liquidacion: Liquidacion,
+    pagos: PagoDeLiquidacion,
 }
 
 #[tauri::command]
 pub async fn get_comprobante(state: State<'_, DbState>, liquidacion_id: i64) -> Result<ComprobanteCompleto, String> {
-    let conn = obtener_conn(&state).await?;
-    let r = conn
-        .query_one(
-            "SELECT id, pago_id, fecha, monto_alquiler, comision_porcentaje, monto_comision, monto_neto, numero_comprobante, notas FROM liquidaciones WHERE id=$1",
-            &[&liquidacion_id],
+    let cliente = obtener_cliente(&state).await?;
+    let fila: LiquidacionEmbed = cliente
+        .select_uno(
+            "liquidaciones",
+            &format!(
+                "id=eq.{}&select=*,pagos(periodo,contratos(inquilinos(nombre),inmuebles(direccion,propietarios(nombre,datos_bancarios))))",
+                liquidacion_id
+            ),
         )
-        .await
-        .map_err(map_err)?;
-    let liquidacion = Liquidacion {
-        id: r.get(0),
-        pago_id: r.get(1),
-        fecha: r.get(2),
-        monto_alquiler: r.get(3),
-        comision_porcentaje: r.get(4),
-        monto_comision: r.get(5),
-        monto_neto: r.get(6),
-        numero_comprobante: r.get(7),
-        notas: r.get(8),
-    };
-
-    let periodo: String = conn
-        .query_one("SELECT periodo FROM pagos WHERE id=$1", &[&liquidacion.pago_id])
         .await
         .map_err(map_err)?
-        .get(0);
-
-    let r2 = conn
-        .query_one(
-            "SELECT p.nombre, p.datos_bancarios, im.direccion, iq.nombre
-             FROM pagos pa
-             JOIN contratos c ON c.id = pa.contrato_id
-             JOIN inmuebles im ON im.id = c.inmueble_id
-             JOIN propietarios p ON p.id = im.propietario_id
-             JOIN inquilinos iq ON iq.id = c.inquilino_id
-             WHERE pa.id = $1",
-            &[&liquidacion.pago_id],
-        )
-        .await
-        .map_err(map_err)?;
-
+        .ok_or_else(|| "El comprobante no existe".to_string())?;
     Ok(ComprobanteCompleto {
-        liquidacion,
-        periodo,
-        propietario_nombre: r2.get(0),
-        propietario_datos_bancarios: r2.get(1),
-        inmueble_direccion: r2.get(2),
-        inquilino_nombre: r2.get(3),
+        periodo: fila.pagos.periodo,
+        propietario_nombre: fila.pagos.contratos.inmuebles.propietarios.nombre,
+        propietario_datos_bancarios: fila.pagos.contratos.inmuebles.propietarios.datos_bancarios,
+        inmueble_direccion: fila.pagos.contratos.inmuebles.direccion,
+        inquilino_nombre: fila.pagos.contratos.inquilinos.nombre,
+        liquidacion: fila.liquidacion,
     })
 }
 
 // ---------- Tablero de control ----------
 
+#[derive(Debug, Deserialize)]
+struct PagoPeriodo {
+    contrato_id: i64,
+    periodo: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PersonaCumple {
+    nombre: String,
+    fecha_nacimiento: Option<String>,
+}
+
 #[tauri::command]
 pub async fn get_dashboard(state: State<'_, DbState>, dias_vencimiento: i64, dias_actualizacion: i64, dias_cumpleanos: i64) -> Result<ResumenDashboard, String> {
-    let conn = obtener_conn(&state).await?;
+    let cliente = obtener_cliente(&state).await?;
     let hoy = today();
 
-    struct ContratoBasico {
+    #[derive(Debug, Deserialize)]
+    struct ContratoDashRaw {
         id: i64,
-        inmueble_direccion: String,
-        inquilino_nombre: String,
-        propietario_nombre: String,
-        fecha_inicio: NaiveDate,
-        fecha_fin: NaiveDate,
+        fecha_inicio: String,
+        fecha_fin: String,
         dia_pago: i64,
+        monto_inicial: f64,
         tasa_mora_diaria: f64,
         frecuencia_actualizacion_meses: i64,
         tipo_actualizacion: String,
+        inmuebles: InmuebleDeContratoSimple,
+        inquilinos: InquilinoNombre,
+        actualizaciones: Vec<ActualizacionBase>,
     }
 
-    let filas = conn
-        .query(
-            "SELECT c.id, im.direccion, iq.nombre, p.nombre, c.fecha_inicio, c.fecha_fin, c.dia_pago, c.tasa_mora_diaria, c.frecuencia_actualizacion_meses, c.tipo_actualizacion
-             FROM contratos c
-             JOIN inmuebles im ON im.id = c.inmueble_id
-             JOIN propietarios p ON p.id = im.propietario_id
-             JOIN inquilinos iq ON iq.id = c.inquilino_id
-             WHERE c.estado = 'activo'",
-            &[],
+    let filas: Vec<ContratoDashRaw> = cliente
+        .select(
+            "contratos",
+            "estado=eq.activo&select=id,fecha_inicio,fecha_fin,dia_pago,monto_inicial,tasa_mora_diaria,frecuencia_actualizacion_meses,tipo_actualizacion,inmuebles(direccion,propietarios(nombre)),inquilinos(nombre),actualizaciones(fecha_vigencia,monto_nuevo)",
         )
         .await
         .map_err(map_err)?;
 
-    let contratos: Vec<ContratoBasico> = filas
-        .iter()
-        .map(|r| ContratoBasico {
-            id: r.get(0),
-            inmueble_direccion: r.get(1),
-            inquilino_nombre: r.get(2),
-            propietario_nombre: r.get(3),
-            fecha_inicio: parse_date(&r.get::<_, String>(4)),
-            fecha_fin: parse_date(&r.get::<_, String>(5)),
-            dia_pago: r.get(6),
-            tasa_mora_diaria: r.get(7),
-            frecuencia_actualizacion_meses: r.get(8),
-            tipo_actualizacion: r.get(9),
-        })
-        .collect();
+    let pagos: Vec<PagoPeriodo> = cliente.select("pagos", "select=contrato_id,periodo").await.map_err(map_err)?;
+    let periodos_pagados: std::collections::HashSet<(i64, String)> = pagos.into_iter().map(|p| (p.contrato_id, p.periodo)).collect();
 
     let mut deudas = Vec::new();
     let mut vencimientos = Vec::new();
     let mut actualizaciones_pendientes = Vec::new();
     let mut total_adeudado = 0.0;
+    let total_contratos_activos = filas.len() as i64;
 
-    for c in &contratos {
+    for c in &filas {
+        let fecha_inicio = parse_date(&c.fecha_inicio);
+        let fecha_fin = parse_date(&c.fecha_fin);
+
         // --- deudas ---
         let mut periodos_impagos = Vec::new();
         let mut monto_adeudado = 0.0;
-        let mut cursor = NaiveDate::from_ymd_opt(c.fecha_inicio.year(), c.fecha_inicio.month(), 1).unwrap();
+        let mut cursor = NaiveDate::from_ymd_opt(fecha_inicio.year(), fecha_inicio.month(), 1).unwrap();
         let limite = NaiveDate::from_ymd_opt(hoy.year(), hoy.month(), 1).unwrap();
         while cursor <= limite {
             let periodo = periodo_de(cursor);
             let vencimiento = due_date_for_periodo(&periodo, c.dia_pago);
-            if vencimiento <= hoy {
-                let pagado = conn
-                    .query_opt("SELECT id FROM pagos WHERE contrato_id=$1 AND periodo=$2 LIMIT 1", &[&c.id, &periodo])
-                    .await
-                    .map_err(map_err)?;
-                if pagado.is_none() {
-                    let monto = monto_vigente(&conn, c.id, vencimiento).await?;
-                    let dias_mora = (hoy - vencimiento).num_days().max(0);
-                    let mora = monto * (c.tasa_mora_diaria / 100.0) * dias_mora as f64;
-                    periodos_impagos.push(periodo.clone());
-                    monto_adeudado += monto + mora;
-                }
+            if vencimiento <= hoy && !periodos_pagados.contains(&(c.id, periodo.clone())) {
+                let monto = monto_vigente_de(&c.actualizaciones, c.monto_inicial, vencimiento);
+                let dias_mora = (hoy - vencimiento).num_days().max(0);
+                let mora = monto * (c.tasa_mora_diaria / 100.0) * dias_mora as f64;
+                periodos_impagos.push(periodo.clone());
+                monto_adeudado += monto + mora;
             }
             cursor = add_months(cursor, 1);
         }
@@ -891,35 +795,35 @@ pub async fn get_dashboard(state: State<'_, DbState>, dias_vencimiento: i64, dia
             total_adeudado += monto_adeudado;
             deudas.push(DeudaContrato {
                 contrato_id: c.id,
-                inmueble_direccion: c.inmueble_direccion.clone(),
-                inquilino_nombre: c.inquilino_nombre.clone(),
+                inmueble_direccion: c.inmuebles.direccion.clone(),
+                inquilino_nombre: c.inquilinos.nombre.clone(),
                 periodos_impagos,
                 monto_adeudado,
             });
         }
 
         // --- vencimientos de contrato ---
-        let dias_restantes = (c.fecha_fin - hoy).num_days();
+        let dias_restantes = (fecha_fin - hoy).num_days();
         if dias_restantes <= dias_vencimiento {
             vencimientos.push(VencimientoContrato {
                 contrato_id: c.id,
-                inmueble_direccion: c.inmueble_direccion.clone(),
-                inquilino_nombre: c.inquilino_nombre.clone(),
-                propietario_nombre: c.propietario_nombre.clone(),
-                fecha_fin: c.fecha_fin.format("%Y-%m-%d").to_string(),
+                inmueble_direccion: c.inmuebles.direccion.clone(),
+                inquilino_nombre: c.inquilinos.nombre.clone(),
+                propietario_nombre: c.inmuebles.propietarios.nombre.clone(),
+                fecha_fin: fecha_fin.format("%Y-%m-%d").to_string(),
                 dias_restantes,
             });
         }
 
         // --- actualizaciones pendientes ---
-        let proxima = proxima_fecha_actualizacion(&conn, c.id, c.fecha_inicio, c.frecuencia_actualizacion_meses).await?;
+        let proxima = proxima_fecha_actualizacion_de(&c.actualizaciones, fecha_inicio, c.frecuencia_actualizacion_meses);
         let dias_restantes_act = (proxima - hoy).num_days();
         if dias_restantes_act <= dias_actualizacion {
-            let monto_vig = monto_vigente(&conn, c.id, hoy).await?;
+            let monto_vig = monto_vigente_de(&c.actualizaciones, c.monto_inicial, hoy);
             actualizaciones_pendientes.push(ActualizacionPendiente {
                 contrato_id: c.id,
-                inmueble_direccion: c.inmueble_direccion.clone(),
-                inquilino_nombre: c.inquilino_nombre.clone(),
+                inmueble_direccion: c.inmuebles.direccion.clone(),
+                inquilino_nombre: c.inquilinos.nombre.clone(),
                 tipo_actualizacion: c.tipo_actualizacion.clone(),
                 fecha_prevista: proxima.format("%Y-%m-%d").to_string(),
                 dias_restantes: dias_restantes_act,
@@ -934,15 +838,16 @@ pub async fn get_dashboard(state: State<'_, DbState>, dias_vencimiento: i64, dia
     // --- próximos cumpleaños (propietarios, inquilinos y garantes) ---
     let mut personas: Vec<(String, &str, String)> = Vec::new();
     for (tabla, tipo) in [("propietarios", "Propietario"), ("inquilinos", "Inquilino"), ("garantes", "Garante")] {
-        let rows = conn
-            .query(
-                &format!("SELECT nombre, fecha_nacimiento FROM {} WHERE fecha_nacimiento IS NOT NULL AND fecha_nacimiento != ''", tabla),
-                &[],
-            )
+        let rows: Vec<PersonaCumple> = cliente
+            .select(tabla, "select=nombre,fecha_nacimiento&fecha_nacimiento=not.is.null")
             .await
             .map_err(map_err)?;
         for r in rows {
-            personas.push((r.get(0), tipo, r.get(1)));
+            if let Some(f) = r.fecha_nacimiento {
+                if !f.is_empty() {
+                    personas.push((r.nombre, tipo, f));
+                }
+            }
         }
     }
 
@@ -965,14 +870,7 @@ pub async fn get_dashboard(state: State<'_, DbState>, dias_vencimiento: i64, dia
         .collect();
     cumpleanos_proximos.sort_by_key(|c| c.dias_restantes);
 
-    Ok(ResumenDashboard {
-        deudas,
-        vencimientos,
-        actualizaciones_pendientes,
-        cumpleanos_proximos,
-        total_contratos_activos: contratos.len() as i64,
-        total_adeudado,
-    })
+    Ok(ResumenDashboard { deudas, vencimientos, actualizaciones_pendientes, cumpleanos_proximos, total_contratos_activos, total_adeudado })
 }
 
 // ---------- Actualización por índice ICL (BCRA) ----------
@@ -983,31 +881,34 @@ pub async fn get_dashboard(state: State<'_, DbState>, dias_vencimiento: i64, dia
 /// día de la actualización) o la fecha real de la próxima actualización para
 /// obtener el valor definitivo.
 async fn calcular_con_icl(state: &DbState, contrato_id: i64, fecha_objetivo_es_hoy: bool) -> Result<EstimacionIcl, String> {
-    let conn = obtener_conn(state).await?;
-    let fila = conn
-        .query_one(
-            "SELECT fecha_inicio, frecuencia_actualizacion_meses, tipo_actualizacion FROM contratos WHERE id=$1",
-            &[&contrato_id],
-        )
-        .await
-        .map_err(map_err)?;
-    let fecha_inicio_s: String = fila.get(0);
-    let frecuencia: i64 = fila.get(1);
-    let tipo_actualizacion: String = fila.get(2);
+    #[derive(Deserialize)]
+    struct ContratoParaIcl {
+        fecha_inicio: String,
+        monto_inicial: f64,
+        frecuencia_actualizacion_meses: i64,
+        tipo_actualizacion: String,
+    }
 
-    let fecha_inicio = parse_date(&fecha_inicio_s);
-    let fecha_referencia = fecha_base_actualizacion(&conn, contrato_id, fecha_inicio).await?;
+    let cliente = obtener_cliente(state).await?;
+    let contrato: ContratoParaIcl = cliente
+        .select_uno("contratos", &format!("id=eq.{}&select=fecha_inicio,monto_inicial,frecuencia_actualizacion_meses,tipo_actualizacion", contrato_id))
+        .await
+        .map_err(map_err)?
+        .ok_or_else(|| "El contrato no existe".to_string())?;
+
+    if contrato.tipo_actualizacion != "ICL" {
+        return Err("Este contrato no usa el índice ICL como esquema de actualización".to_string());
+    }
+
+    let actualizaciones = actualizaciones_de(&cliente, contrato_id).await?;
+    let fecha_inicio = parse_date(&contrato.fecha_inicio);
+    let fecha_referencia = fecha_base_de(&actualizaciones, fecha_inicio);
     let fecha_objetivo = if fecha_objetivo_es_hoy {
         today()
     } else {
-        proxima_fecha_actualizacion(&conn, contrato_id, fecha_inicio, frecuencia).await?
+        proxima_fecha_actualizacion_de(&actualizaciones, fecha_inicio, contrato.frecuencia_actualizacion_meses)
     };
-    let monto_actual = monto_vigente(&conn, contrato_id, today()).await?;
-    drop(conn);
-
-    if tipo_actualizacion != "ICL" {
-        return Err("Este contrato no usa el índice ICL como esquema de actualización".to_string());
-    }
+    let monto_actual = monto_vigente_de(&actualizaciones, contrato.monto_inicial, today());
 
     let client = icl::cliente_http()?;
     let id_variable = match icl::id_variable_icl(&client).await {
@@ -1046,31 +947,18 @@ pub async fn confirmar_actualizacion_icl(state: State<'_, DbState>, contrato_id:
 
 // ---------- Usuarios / login ----------
 
-fn fila_a_usuario(r: &tokio_postgres::Row) -> Usuario {
-    Usuario {
-        id: r.get(0),
-        username: r.get(1),
-        nombre_completo: r.get(2),
-        activo: r.get(3),
-    }
-}
-
 /// true si todavia no se creo ningun usuario (primer arranque de la app).
 #[tauri::command]
 pub async fn hay_usuarios(state: State<'_, DbState>) -> Result<bool, String> {
-    let conn = obtener_conn(&state).await?;
-    let cantidad: i64 = conn.query_one("SELECT COUNT(*) FROM usuarios", &[]).await.map_err(map_err)?.get(0);
-    Ok(cantidad > 0)
+    let cliente = obtener_cliente(&state).await?;
+    let filas: Vec<Value> = cliente.select("usuarios", "select=id&limit=1").await.map_err(map_err)?;
+    Ok(!filas.is_empty())
 }
 
 #[tauri::command]
 pub async fn get_usuarios(state: State<'_, DbState>) -> Result<Vec<Usuario>, String> {
-    let conn = obtener_conn(&state).await?;
-    let rows = conn
-        .query("SELECT id, username, nombre_completo, activo FROM usuarios ORDER BY nombre_completo", &[])
-        .await
-        .map_err(map_err)?;
-    Ok(rows.iter().map(fila_a_usuario).collect())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.select("usuarios", "select=id,username,nombre_completo,activo&order=nombre_completo").await.map_err(map_err)
 }
 
 /// Crea un usuario nuevo. Cualquiera puede crear el primero (arranque de la
@@ -1082,194 +970,182 @@ pub async fn crear_usuario(state: State<'_, DbState>, nuevo: NuevoUsuario) -> Re
         return Err("El usuario no puede estar vacío y la contraseña debe tener al menos 4 caracteres".to_string());
     }
     let hash = bcrypt::hash(&nuevo.password, bcrypt::DEFAULT_COST).map_err(map_err)?;
-    let conn = obtener_conn(&state).await?;
-    let fila = conn
-        .query_one(
-            "INSERT INTO usuarios (username, password_hash, nombre_completo, activo) VALUES ($1, $2, $3, TRUE) RETURNING id, username, nombre_completo, activo",
-            &[&nuevo.username.trim(), &hash, &nuevo.nombre_completo.trim()],
-        )
-        .await
-        .map_err(|e| {
-            if e.code() == Some(&SqlState::UNIQUE_VIOLATION) {
-                "Ya existe un usuario con ese nombre de usuario".to_string()
-            } else {
-                map_err(e)
-            }
-        })?;
-    Ok(fila_a_usuario(&fila))
+    let cliente = obtener_cliente(&state).await?;
+    let body = json!({
+        "username": nuevo.username.trim(), "password_hash": hash, "nombre_completo": nuevo.nombre_completo.trim(), "activo": true,
+    });
+    cliente.insert("usuarios", &body).await.map_err(|e: ErrorSupabase| {
+        if e.es_codigo(UNIQUE_VIOLATION) {
+            "Ya existe un usuario con ese nombre de usuario".to_string()
+        } else {
+            e.to_string()
+        }
+    })
 }
 
 #[tauri::command]
 pub async fn eliminar_usuario(state: State<'_, DbState>, id: i64) -> Result<(), String> {
-    let conn = obtener_conn(&state).await?;
-    conn.execute("DELETE FROM usuarios WHERE id=$1", &[&id]).await.map_err(map_err)?;
-    Ok(())
+    let cliente = obtener_cliente(&state).await?;
+    cliente.delete("usuarios", &format!("id=eq.{}", id)).await.map_err(map_err)
+}
+
+#[derive(Debug, Deserialize)]
+struct UsuarioConHash {
+    id: i64,
+    username: String,
+    password_hash: String,
+    nombre_completo: String,
+    activo: bool,
 }
 
 #[tauri::command]
 pub async fn iniciar_sesion(state: State<'_, DbState>, username: String, password: String) -> Result<Usuario, String> {
-    let conn = obtener_conn(&state).await?;
-    let fila = conn
-        .query_opt(
-            "SELECT id, username, password_hash, nombre_completo, activo FROM usuarios WHERE username = $1",
-            &[&username.trim()],
-        )
+    let cliente = obtener_cliente(&state).await?;
+    let fila: UsuarioConHash = cliente
+        .select_uno("usuarios", &format!("username=eq.{}&select=id,username,password_hash,nombre_completo,activo", urlencoding(username.trim())))
         .await
         .map_err(map_err)?
         .ok_or_else(|| "Usuario o contraseña incorrectos".to_string())?;
 
-    let id: i64 = fila.get(0);
-    let username: String = fila.get(1);
-    let password_hash: String = fila.get(2);
-    let nombre_completo: String = fila.get(3);
-    let activo: bool = fila.get(4);
-
-    if !activo {
+    if !fila.activo {
         return Err("Este usuario está deshabilitado".to_string());
     }
 
-    let valido = bcrypt::verify(&password, &password_hash).map_err(map_err)?;
+    let valido = bcrypt::verify(&password, &fila.password_hash).map_err(map_err)?;
     if !valido {
         return Err("Usuario o contraseña incorrectos".to_string());
     }
 
-    Ok(Usuario { id, username, nombre_completo, activo: true })
+    Ok(Usuario { id: fila.id, username: fila.username, nombre_completo: fila.nombre_completo, activo: true })
 }
 
-/// Test de integración contra un Postgres real: valida que el esquema y el
-/// SQL de cada comando (RETURNING, ON CONFLICT, UNIQUE, joins, el conteo
-/// dinámico de cumpleaños) corren tal cual contra Postgres, no solo que
-/// compilan. Se salta solo si TEST_DATABASE_URL no está definida.
+/// Mensaje legible cuando un borrado choca contra una clave foránea de otra
+/// tabla que todavía referencia la fila (DELETE RESTRICT).
+fn mensaje_borrado_restringido(entidad: &'static str) -> impl Fn(ErrorSupabase) -> String {
+    move |e| {
+        if e.es_codigo(FOREIGN_KEY_VIOLATION) {
+            format!("No se puede eliminar: hay otros registros que todavía dependen de este {}.", entidad)
+        } else {
+            e.to_string()
+        }
+    }
+}
+
+fn urlencoding(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+/// Test de integración contra un PostgREST real (y Postgres debajo): valida
+/// que el cliente REST y la lógica de negocio de cada comando (RETURNING,
+/// ON CONFLICT vía ignore-duplicates, UNIQUE, joins anidados, el conteo
+/// dinámico de cumpleaños, DELETE RESTRICT) funcionan tal cual contra la
+/// API con la que habla la app, no solo que compilan. Se salta solo si
+/// TEST_SUPABASE_URL / TEST_SUPABASE_ANON_KEY no están definidas.
 #[cfg(test)]
-mod tests_postgres {
+mod tests_rest {
     use super::*;
 
-    async fn conectar_test() -> Option<Pool> {
-        let url = std::env::var("TEST_DATABASE_URL").ok()?;
-        Some(crate::db::conectar(&url).await.expect("no se pudo conectar a la base de datos de test"))
+    async fn conectar_test() -> Option<Cliente> {
+        let url = std::env::var("TEST_SUPABASE_URL").ok()?;
+        let anon_key = std::env::var("TEST_SUPABASE_ANON_KEY").ok()?;
+        Some(Cliente::con_base_completa(url, anon_key))
+    }
+
+    async fn limpiar_todo(cliente: &Cliente) {
+        for tabla in ["liquidaciones", "pagos", "contrato_garantes", "actualizaciones", "contratos", "inmuebles", "garantes", "inquilinos", "propietarios", "usuarios"] {
+            let _ = cliente.delete(tabla, "id=gte.0").await;
+        }
     }
 
     #[tokio::test]
-    async fn flujo_completo_contra_postgres() {
-        let Some(pool) = conectar_test().await else {
-            eprintln!("TEST_DATABASE_URL no está definida: se omite el test de integración con Postgres");
+    async fn flujo_completo_contra_postgrest() {
+        let Some(cliente) = conectar_test().await else {
+            eprintln!("TEST_SUPABASE_URL / TEST_SUPABASE_ANON_KEY no están definidas: se omite el test de integración con PostgREST");
             return;
         };
-        let state = DbState(RwLock::new(Some(pool)));
-        let conn = obtener_conn(&state).await.unwrap();
-
-        conn.batch_execute(
-            "TRUNCATE usuarios, propietarios, inquilinos, garantes, inmuebles, contratos, contrato_garantes, actualizaciones, pagos, liquidaciones RESTART IDENTITY CASCADE",
-        )
-        .await
-        .unwrap();
+        limpiar_todo(&cliente).await;
 
         // --- usuarios: alta, UNIQUE violation, bcrypt ---
         let hash = bcrypt::hash("claveSegura1", bcrypt::DEFAULT_COST).unwrap();
-        let fila = conn
-            .query_one(
-                "INSERT INTO usuarios (username, password_hash, nombre_completo, activo) VALUES ($1,$2,$3,TRUE) RETURNING id, username, nombre_completo, activo",
-                &[&"agustin", &hash, &"Agustín"],
-            )
+        let usuario: Usuario = cliente
+            .insert("usuarios", &json!({"username":"agustin","password_hash":hash,"nombre_completo":"Agustín","activo":true}))
             .await
             .unwrap();
-        let usuario = fila_a_usuario(&fila);
         assert_eq!(usuario.username, "agustin");
         assert!(usuario.activo);
 
-        let duplicado = conn
-            .query_one(
-                "INSERT INTO usuarios (username, password_hash, nombre_completo, activo) VALUES ($1,$2,$3,TRUE) RETURNING id",
-                &[&"agustin", &hash, &"Otro"],
-            )
+        let duplicado = cliente
+            .insert::<Usuario>("usuarios", &json!({"username":"agustin","password_hash":hash,"nombre_completo":"Otro","activo":true}))
             .await;
-        let err = duplicado.unwrap_err();
-        assert_eq!(err.code(), Some(&SqlState::UNIQUE_VIOLATION));
+        assert!(duplicado.unwrap_err().es_codigo(UNIQUE_VIOLATION));
 
-        let fila_login = conn
-            .query_opt("SELECT password_hash FROM usuarios WHERE username = $1", &[&"agustin"])
+        let fila_login: UsuarioConHash = cliente
+            .select_uno("usuarios", "username=eq.agustin&select=id,username,password_hash,nombre_completo,activo")
             .await
             .unwrap()
             .unwrap();
-        let hash_guardado: String = fila_login.get(0);
-        assert!(bcrypt::verify("claveSegura1", &hash_guardado).unwrap());
-        assert!(!bcrypt::verify("claveIncorrecta", &hash_guardado).unwrap());
+        assert!(bcrypt::verify("claveSegura1", &fila_login.password_hash).unwrap());
+        assert!(!bcrypt::verify("claveIncorrecta", &fila_login.password_hash).unwrap());
 
         // --- propietarios: insert con RETURNING, update ---
-        let propietario_id: i64 = conn
-            .query_one(
-                "INSERT INTO propietarios (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, datos_bancarios, notas) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
-                &[&"Monchola", &"20111222", &"1980-05-20", &"1122334455", &None::<String>, &None::<String>, &"CBU 123", &None::<String>],
-            )
-            .await
-            .unwrap()
-            .get(0);
-        conn.execute("UPDATE propietarios SET telefono=$1 WHERE id=$2", &[&"1199998888", &propietario_id]).await.unwrap();
-        let telefono: String = conn
-            .query_one("SELECT telefono FROM propietarios WHERE id=$1", &[&propietario_id])
-            .await
-            .unwrap()
-            .get(0);
-        assert_eq!(telefono, "1199998888");
-
-        // --- inmueble con FK a propietario ---
-        let inmueble_id: i64 = conn
-            .query_one(
-                "INSERT INTO inmuebles (propietario_id, direccion, tipo, superficie, ambientes, notas) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
-                &[&propietario_id, &"Mitre 586", &"Departamento", &45.0_f64, &2_i64, &None::<String>],
-            )
-            .await
-            .unwrap()
-            .get(0);
-
-        // --- inquilino y garante ---
-        let inquilino_id: i64 = conn
-            .query_one(
-                "INSERT INTO inquilinos (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, notas) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
-                &[&"Juan Pérez", &None::<String>, &None::<String>, &None::<String>, &None::<String>, &None::<String>, &None::<String>],
-            )
-            .await
-            .unwrap()
-            .get(0);
-        let garante_id: i64 = conn
-            .query_one(
-                "INSERT INTO garantes (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, notas) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
-                &[&"María Gómez", &None::<String>, &None::<String>, &None::<String>, &None::<String>, &None::<String>, &None::<String>],
-            )
-            .await
-            .unwrap()
-            .get(0);
-
-        // --- contrato con joins (construir_contrato_detallado) ---
-        let contrato_id: i64 = conn
-            .query_one(
-                "INSERT INTO contratos (inmueble_id, inquilino_id, fecha_inicio, fecha_fin, dia_pago, monto_inicial,
-                 comision_porcentaje, tasa_mora_diaria, frecuencia_actualizacion_meses, tipo_actualizacion,
-                 porcentaje_actualizacion, estado, notas) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id",
-                &[&inmueble_id, &inquilino_id, &"2026-01-01", &"2028-01-01", &10_i64, &400000.0_f64,
-                    &5.0_f64, &0.1_f64, &3_i64, &"ICL", &0.0_f64, &"activo", &None::<String>],
-            )
-            .await
-            .unwrap()
-            .get(0);
-
-        // ON CONFLICT DO NOTHING: insertar el mismo par dos veces no duplica
-        for _ in 0..2 {
-            conn.execute(
-                "INSERT INTO contrato_garantes (contrato_id, garante_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
-                &[&contrato_id, &garante_id],
+        let propietario: Propietario = cliente
+            .insert(
+                "propietarios",
+                &json!({"nombre":"Monchola","dni_cuit":"20111222","fecha_nacimiento":"1980-05-20","datos_bancarios":"CBU 123"}),
             )
             .await
             .unwrap();
-        }
-        let cantidad_garantes: i64 = conn
-            .query_one("SELECT COUNT(*) FROM contrato_garantes WHERE contrato_id=$1", &[&contrato_id])
-            .await
-            .unwrap()
-            .get(0);
-        assert_eq!(cantidad_garantes, 1);
+        let propietario_id = propietario.id.unwrap();
+        cliente.update("propietarios", &format!("id=eq.{}", propietario_id), &json!({"telefono": "1199998888"})).await.unwrap();
+        let actualizado: Propietario = cliente.select_uno("propietarios", &format!("id=eq.{}&select=*", propietario_id)).await.unwrap().unwrap();
+        assert_eq!(actualizado.telefono, Some("1199998888".to_string()));
 
-        let detallado = construir_contrato_detallado(&conn, contrato_id).await.unwrap();
+        // --- inmueble con FK a propietario ---
+        let inmueble: Inmueble = cliente
+            .insert("inmuebles", &json!({"propietario_id": propietario_id, "direccion": "Mitre 586", "tipo": "Departamento", "superficie": 45.0, "ambientes": 2}))
+            .await
+            .unwrap();
+        let inmueble_id = inmueble.id.unwrap();
+
+        // --- inquilino y garante ---
+        let inquilino: Inquilino = cliente.insert("inquilinos", &json!({"nombre": "Juan Pérez"})).await.unwrap();
+        let inquilino_id = inquilino.id.unwrap();
+        let garante: Garante = cliente.insert("garantes", &json!({"nombre": "María Gómez"})).await.unwrap();
+        let garante_id = garante.id.unwrap();
+
+        // --- contrato con joins anidados (contrato_embed_a_detallado) ---
+        let contrato: FilaId = cliente
+            .insert(
+                "contratos",
+                &json!({
+                    "inmueble_id": inmueble_id, "inquilino_id": inquilino_id, "fecha_inicio": "2026-01-01", "fecha_fin": "2028-01-01",
+                    "dia_pago": 10, "monto_inicial": 400000.0, "comision_porcentaje": 5.0, "tasa_mora_diaria": 0.1,
+                    "frecuencia_actualizacion_meses": 3, "tipo_actualizacion": "ICL", "porcentaje_actualizacion": 0.0, "estado": "activo",
+                }),
+            )
+            .await
+            .unwrap();
+        let contrato_id = contrato.id;
+
+        // ignore-duplicates (equivalente a ON CONFLICT DO NOTHING): insertar el mismo par dos veces no duplica
+        for _ in 0..2 {
+            cliente
+                .insert_ignorando_conflicto("contrato_garantes", &json!({"contrato_id": contrato_id, "garante_id": garante_id}), "contrato_id,garante_id")
+                .await
+                .unwrap();
+        }
+        let filas_garantes: Vec<Value> = cliente.select("contrato_garantes", &format!("contrato_id=eq.{}&select=garante_id", contrato_id)).await.unwrap();
+        assert_eq!(filas_garantes.len(), 1);
+
+        let filas: Vec<ContratoEmbed> = cliente.select("contratos", &format!("id=eq.{}&{}", contrato_id, SELECT_CONTRATO_DETALLADO)).await.unwrap();
+        let detallado = contrato_embed_a_detallado(filas.into_iter().next().unwrap(), today());
         assert_eq!(detallado.inmueble_direccion, "Mitre 586");
         assert_eq!(detallado.inquilino_nombre, "Juan Pérez");
         assert_eq!(detallado.propietario_nombre, "Monchola");
@@ -1277,59 +1153,56 @@ mod tests_postgres {
         assert_eq!(detallado.monto_vigente, 400000.0);
 
         // --- actualizacion de alquiler ---
-        conn.execute(
-            "INSERT INTO actualizaciones (contrato_id, fecha_vigencia, monto_nuevo, motivo) VALUES ($1,$2,$3,$4)",
-            &[&contrato_id, &"2026-04-01", &440000.0_f64, &"Actualización ICL"],
-        )
-        .await
-        .unwrap();
-        let monto_post_actualizacion = monto_vigente(&conn, contrato_id, parse_date("2026-05-01")).await.unwrap();
-        assert_eq!(monto_post_actualizacion, 440000.0);
-        let monto_antes = monto_vigente(&conn, contrato_id, parse_date("2026-02-01")).await.unwrap();
-        assert_eq!(monto_antes, 400000.0);
-
-        // --- pago con numeración secuencial ---
-        let numero_recibo: i64 = conn.query_one("SELECT COALESCE(MAX(numero_recibo),0)+1 FROM pagos", &[]).await.unwrap().get(0);
-        assert_eq!(numero_recibo, 1);
-        let pago_id: i64 = conn
-            .query_one(
-                "INSERT INTO pagos (contrato_id, periodo, fecha_pago, monto_alquiler, dias_mora, monto_mora, monto_total, metodo_pago, numero_recibo, notas)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
-                &[&contrato_id, &"2026-05", &"2026-05-10", &440000.0_f64, &0_i64, &0.0_f64, &440000.0_f64, &"Transferencia", &numero_recibo, &None::<String>],
+        cliente
+            .insert::<Actualizacion>(
+                "actualizaciones",
+                &json!({"contrato_id": contrato_id, "fecha_vigencia": "2026-04-01", "monto_nuevo": 440000.0, "motivo": "Actualización ICL"}),
             )
             .await
-            .unwrap()
-            .get(0);
+            .unwrap();
+        let actualizaciones = actualizaciones_de(&cliente, contrato_id).await.unwrap();
+        assert_eq!(monto_vigente_de(&actualizaciones, 400000.0, parse_date("2026-05-01")), 440000.0);
+        assert_eq!(monto_vigente_de(&actualizaciones, 400000.0, parse_date("2026-02-01")), 400000.0);
+
+        // --- pago con numeración secuencial ---
+        let numero_recibo = siguiente_numero(&cliente, "pagos", "numero_recibo").await.unwrap();
+        assert_eq!(numero_recibo, 1);
+        let pago: Pago = cliente
+            .insert(
+                "pagos",
+                &json!({
+                    "contrato_id": contrato_id, "periodo": "2026-05", "fecha_pago": "2026-05-10", "monto_alquiler": 440000.0,
+                    "dias_mora": 0, "monto_mora": 0.0, "monto_total": 440000.0, "metodo_pago": "Transferencia", "numero_recibo": numero_recibo,
+                }),
+            )
+            .await
+            .unwrap();
 
         // --- liquidacion ---
-        let numero_comprobante: i64 = conn.query_one("SELECT COALESCE(MAX(numero_comprobante),0)+1 FROM liquidaciones", &[]).await.unwrap().get(0);
+        let numero_comprobante = siguiente_numero(&cliente, "liquidaciones", "numero_comprobante").await.unwrap();
         assert_eq!(numero_comprobante, 1);
-        conn.execute(
-            "INSERT INTO liquidaciones (pago_id, fecha, monto_alquiler, comision_porcentaje, monto_comision, monto_neto, numero_comprobante, notas)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-            &[&pago_id, &"2026-05-10", &440000.0_f64, &5.0_f64, &22000.0_f64, &418000.0_f64, &numero_comprobante, &None::<String>],
-        )
-        .await
-        .unwrap();
+        cliente
+            .insert::<Liquidacion>(
+                "liquidaciones",
+                &json!({
+                    "pago_id": pago.id, "fecha": "2026-05-10", "monto_alquiler": 440000.0, "comision_porcentaje": 5.0,
+                    "monto_comision": 22000.0, "monto_neto": 418000.0, "numero_comprobante": numero_comprobante,
+                }),
+            )
+            .await
+            .unwrap();
 
-        // --- consulta dinámica de cumpleaños (nombre de tabla por format!) ---
+        // --- consulta dinámica de cumpleaños (mismo recorrido que usa get_dashboard) ---
         for tabla in ["propietarios", "inquilinos", "garantes"] {
-            let filas = conn
-                .query(
-                    &format!("SELECT nombre, fecha_nacimiento FROM {} WHERE fecha_nacimiento IS NOT NULL AND fecha_nacimiento != ''", tabla),
-                    &[],
-                )
-                .await
-                .unwrap();
+            let filas: Vec<PersonaCumple> = cliente.select(tabla, "select=nombre,fecha_nacimiento&fecha_nacimiento=not.is.null").await.unwrap();
             if tabla == "propietarios" {
                 assert_eq!(filas.len(), 1);
-                let nombre: String = filas[0].get(0);
-                assert_eq!(nombre, "Monchola");
+                assert_eq!(filas[0].nombre, "Monchola");
             }
         }
 
-        // --- limpieza: el DELETE RESTRICT de propietarios con inmuebles debe fallar ---
-        let borrado_restringido = conn.execute("DELETE FROM propietarios WHERE id=$1", &[&propietario_id]).await;
-        assert!(borrado_restringido.is_err());
+        // --- el DELETE RESTRICT de propietarios con inmuebles debe fallar con el código esperado ---
+        let borrado_restringido = cliente.delete("propietarios", &format!("id=eq.{}", propietario_id)).await;
+        assert!(borrado_restringido.unwrap_err().es_codigo(FOREIGN_KEY_VIOLATION));
     }
 }

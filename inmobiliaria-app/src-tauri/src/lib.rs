@@ -1,7 +1,8 @@
 mod commands;
-mod db;
+mod config;
 mod icl;
 mod models;
+mod supabase;
 
 use commands::DbState;
 use tauri::Manager;

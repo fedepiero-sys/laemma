@@ -27,7 +27,8 @@ jobs:
 
       - name: Compilar instalador (.exe / .msi)
         env:
-          INMOBILIARIA_DB_URL: ${{ secrets.INMOBILIARIA_DB_URL }}
+          INMOBILIARIA_SUPABASE_URL: ${{ secrets.INMOBILIARIA_SUPABASE_URL }}
+          INMOBILIARIA_SUPABASE_ANON_KEY: ${{ secrets.INMOBILIARIA_SUPABASE_ANON_KEY }}
         run: npm run tauri build
 
       - name: Subir instalador como artifact descargable

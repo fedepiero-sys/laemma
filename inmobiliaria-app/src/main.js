@@ -1085,9 +1085,10 @@ conexionForm.addEventListener("submit", async (e) => {
   const boton = document.getElementById("conexion-submit");
   boton.disabled = true;
   boton.textContent = "Conectando...";
-  const connectionString = document.getElementById("conexion-string").value;
+  const url = document.getElementById("conexion-url").value;
+  const anonKey = document.getElementById("conexion-anon-key").value;
   try {
-    await invoke("configurar_conexion", { connectionString });
+    await invoke("configurar_conexion", { url, anonKey });
     conexionScreen.classList.add("hidden");
     await mostrarLogin();
   } catch (err) {
