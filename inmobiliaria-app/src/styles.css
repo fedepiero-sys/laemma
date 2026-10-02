@@ -261,6 +261,9 @@ body {
   background: var(--panel); border-radius: 20px; padding: 40px 36px;
   width: 380px; max-width: 90vw; box-shadow: var(--shadow-lg);
 }
+.login-card-ancha { width: 480px; }
+.login-card-ancha .login-subtitle { text-align: left; }
+.login-card-ancha textarea { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; }
 .login-brand { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 6px; }
 .login-brand .brand-icon { width: 54px; height: 54px; font-size: 26px; background: var(--primary-light); border-radius: 16px; }
 .login-brand h1 { font-size: 19px; margin: 0; font-weight: 800; letter-spacing: -0.3px; }

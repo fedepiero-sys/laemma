@@ -4,25 +4,20 @@ mod icl;
 mod models;
 
 use commands::DbState;
-use std::sync::Mutex;
 use tauri::Manager;
+use tokio::sync::RwLock;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .expect("No se pudo resolver el directorio de datos de la aplicacion");
-            std::fs::create_dir_all(&data_dir).expect("No se pudo crear el directorio de datos");
-            let db_path = data_dir.join("inmobiliaria.db");
-            let conn = db::connect(&db_path);
-            app.manage(DbState(Mutex::new(conn)));
+            app.manage(DbState(RwLock::new(None)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::hay_configuracion_conexion,
+            commands::configurar_conexion,
             commands::get_propietarios,
             commands::guardar_propietario,
             commands::eliminar_propietario,

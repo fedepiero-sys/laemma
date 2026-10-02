@@ -206,6 +206,28 @@
     </main>
   </div>
 
+  <!-- Pantalla de configuración de conexión (una vez por PC) -->
+  <div id="conexion-screen" class="login-screen hidden">
+    <div class="login-card login-card-ancha">
+      <div class="login-brand">
+        <span class="brand-icon">🔌</span>
+        <h1>Conectar con la base de datos</h1>
+      </div>
+      <p class="login-subtitle">
+        Pegá acá el connection string de Postgres (Supabase → Connect → ORM → DATABASE_URL). Es el mismo para
+        todas las PCs que van a compartir los mismos datos — pedíselo a quien armó la cuenta si no lo tenés.
+      </p>
+      <form id="conexion-form">
+        <div class="form-field">
+          <label>Connection string</label>
+          <textarea id="conexion-string" rows="3" placeholder="postgresql://usuario:contraseña@host:puerto/postgres" required></textarea>
+        </div>
+        <p class="login-error" id="conexion-error"></p>
+        <button type="submit" class="btn-primary login-submit" id="conexion-submit">Conectar</button>
+      </form>
+    </div>
+  </div>
+
   <!-- Pantalla de login -->
   <div id="login-screen" class="login-screen hidden">
     <div class="login-card">

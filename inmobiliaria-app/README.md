@@ -6,8 +6,9 @@ garantes, inmuebles, contratos, ingresos (recibos de alquiler) y egresos
 vencimientos.
 
 Hecho con [Tauri](https://tauri.app) (Rust + WebView del sistema) y una base
-de datos SQLite local (el archivo se crea solo, en la carpeta de datos del
-usuario). No requiere instalar ningún motor de base de datos aparte.
+de datos Postgres compartida (pensada para [Supabase](https://supabase.com),
+aunque funciona contra cualquier Postgres). Todas las PCs que se conecten al
+mismo proyecto ven y cargan los mismos datos.
 
 ## Qué incluye
 
@@ -34,18 +35,37 @@ usuario). No requiere instalar ningún motor de base de datos aparte.
 - **Login**: la primera vez que se abre la app pide crear un usuario
   (nombre, usuario y contraseña); de ahí en adelante pide usuario y
   contraseña para entrar. Se pueden cargar más usuarios desde la sección
-  "Usuarios" ya logueado. Por ahora las cuentas son locales a cada
-  instalación (ver más abajo si varias personas necesitan compartir los
-  mismos datos).
+  "Usuarios" ya logueado — las cuentas son compartidas entre todas las PCs
+  conectadas a la misma base.
 
 ## Varias personas, varias PCs
 
-Hoy cada instalación guarda su propia base de datos local — si dos personas
-instalan la app en notebooks distintas, cada una ve solo lo que cargó ella.
-Para que compartan los mismos contratos, pagos, etc. desde PCs distintas,
-hace falta migrar la base de datos a un servidor compartido (por ejemplo,
-[Supabase](https://supabase.com)) en lugar de SQLite local. Esa migración
-está en curso — mientras tanto, cada PC funciona de forma independiente.
+La primera vez que se abre la app en una PC, pide el connection string de
+Postgres (ver "Puesta en marcha con Supabase" abajo) y lo guarda en
+`%APPDATA%\com.inmobiliaria.app\conexion.json`. Cualquier PC que se conecte
+con el mismo connection string ve y carga los mismos contratos, pagos,
+usuarios, etc. — no hace falta configurar nada más por PC.
+
+## Puesta en marcha con Supabase
+
+1. Crear una cuenta y un proyecto gratis en [supabase.com](https://supabase.com).
+2. En el proyecto, ir a **Connect → ORM** y copiar el valor de `DATABASE_URL`
+   (es el connection string del **pooler**, con host terminado en
+   `pooler.supabase.com`). **No usar** la pestaña "Direct connection": esa
+   conexión es IPv6-only en el plan gratis, y muchas redes (incluidas varias
+   de Argentina) no tienen salida IPv6.
+3. Pegar ese string en la app la primera vez que se abra en cada PC. El
+   esquema de tablas se crea solo en el primer connect — no hace falta
+   correr ningún SQL a mano.
+4. El primer usuario que se crea queda disponible para cualquier otra PC que
+   se conecte después con el mismo string; desde la sección "Usuarios" se
+   pueden cargar las cuentas de todo el equipo.
+
+El connection string incluye la contraseña de la base en texto plano — se
+guarda localmente en cada PC (no se sube a ningún lado), lo mismo que
+cualquier otro programa de escritorio que se conecta a una base remota. Si
+en algún momento se quiere invalidar el acceso, se puede rotar la
+contraseña desde el panel de Supabase (Settings → Database).
 
 ## Requisitos para compilar
 
@@ -72,9 +92,10 @@ Al finalizar, los instaladores quedan en:
 - `src-tauri/target/release/bundle/msi/Inmobiliaria App_0.1.0_x64_en-US.msi`
 
 Cualquiera de los dos instala el programa normalmente en la PC (acceso
-directo, desinstalador, etc.). La base de datos se guarda en
-`%APPDATA%\com.inmobiliaria.app\inmobiliaria.db`, separada del programa, así
-que reinstalar o actualizar la aplicación no borra los datos cargados.
+directo, desinstalador, etc.). Los datos viven en Postgres (Supabase), no en
+la PC, así que reinstalar o actualizar la aplicación no los afecta; lo único
+que queda guardado localmente es el connection string de conexión (ver
+"Varias personas, varias PCs").
 
 ## Desarrollo
 
@@ -85,9 +106,15 @@ npm run tauri dev
 
 Esto abre la aplicación en una ventana con recarga automática del frontend
 (`src/`). El código de la base de datos y la lógica de negocio están en
-`src-tauri/src/` (Rust): `db.rs` (esquema SQLite), `models.rs` (estructuras
-de datos) y `commands.rs` (comandos que usa la interfaz, incluyendo el
-cálculo de mora, montos vigentes y el tablero de control).
+`src-tauri/src/` (Rust): `db.rs` (esquema Postgres y conexión), `models.rs`
+(estructuras de datos) y `commands.rs` (comandos que usa la interfaz,
+incluyendo el cálculo de mora, montos vigentes y el tablero de control).
+
+`commands.rs` incluye un test de integración (`cargo test --lib
+tests_postgres`) que corre contra un Postgres real y valida el esquema y las
+consultas más sensibles (altas con `RETURNING`, `ON CONFLICT`, joins del
+contrato, numeración secuencial, violación de usuario único). Se salta solo
+si no está definida la variable `TEST_DATABASE_URL`.
 
 ## Notas sobre el cálculo de mora y actualizaciones
 

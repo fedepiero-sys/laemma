@@ -1073,6 +1073,31 @@ document.getElementById("btn-logout").addEventListener("click", () => {
   mostrarLogin();
 });
 
+// ---------- conexión a la base de datos ----------
+
+const conexionScreen = document.getElementById("conexion-screen");
+const conexionForm = document.getElementById("conexion-form");
+const conexionError = document.getElementById("conexion-error");
+
+conexionForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  conexionError.textContent = "";
+  const boton = document.getElementById("conexion-submit");
+  boton.disabled = true;
+  boton.textContent = "Conectando...";
+  const connectionString = document.getElementById("conexion-string").value;
+  try {
+    await invoke("configurar_conexion", { connectionString });
+    conexionScreen.classList.add("hidden");
+    await mostrarLogin();
+  } catch (err) {
+    conexionError.textContent = typeof err === "string" ? err : "No se pudo conectar";
+  } finally {
+    boton.disabled = false;
+    boton.textContent = "Conectar";
+  }
+});
+
 // ---------- login ----------
 
 const loginScreen = document.getElementById("login-screen");
@@ -1123,5 +1148,21 @@ loginForm.addEventListener("submit", async (e) => {
 
 // ---------- arranque ----------
 
-document.getElementById("app").classList.add("hidden");
-mostrarLogin().catch((e) => console.error(e));
+async function arrancar() {
+  document.getElementById("app").classList.add("hidden");
+  let conectado;
+  try {
+    conectado = await invoke("hay_configuracion_conexion");
+  } catch (err) {
+    conexionError.textContent = typeof err === "string" ? err : "No se pudo conectar con la base guardada";
+    conexionScreen.classList.remove("hidden");
+    return;
+  }
+  if (conectado) {
+    await mostrarLogin();
+  } else {
+    conexionScreen.classList.remove("hidden");
+  }
+}
+
+arrancar().catch((e) => console.error(e));
