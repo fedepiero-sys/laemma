@@ -12,6 +12,21 @@ fn archivo_config(data_dir: &std::path::Path) -> PathBuf {
     data_dir.join("conexion.json")
 }
 
+/// La mayoría de los errores de red/TLS envuelven un error más específico
+/// adentro (ej. "error performing TLS handshake" envuelve el motivo real:
+/// certificado vencido, hostname que no matchea, etc). Mostrar solo el
+/// mensaje de más afuera oculta esa info justo cuando más hace falta para
+/// diagnosticar — así que concatenamos toda la cadena.
+fn detalle_completo(e: &(dyn std::error::Error + 'static)) -> String {
+    let mut partes = vec![e.to_string()];
+    let mut actual = e.source();
+    while let Some(err) = actual {
+        partes.push(err.to_string());
+        actual = err.source();
+    }
+    partes.join(" ← ")
+}
+
 /// Lee el connection string guardado en una instalación anterior, si existe.
 pub fn leer_connection_string_guardado(data_dir: &std::path::Path) -> Option<String> {
     let contenido = std::fs::read_to_string(archivo_config(data_dir)).ok()?;
@@ -81,10 +96,19 @@ pub async fn conectar(connection_string: &str) -> Result<Pool, String> {
         .parse()
         .map_err(|e| format!("El connection string no tiene un formato válido: {}", e))?;
 
-    let tls_connector = native_tls::TlsConnector::builder()
-        .build()
-        .map_err(|e| format!("No se pudo inicializar TLS: {}", e))?;
-    let tls = postgres_native_tls::MakeTlsConnector::new(tls_connector);
+    // rustls en vez de native-tls: native-tls usa schannel en Windows, que en
+    // algunas PCs falla el handshake con Postgres de forma genérica y sin
+    // detalle ("error performing TLS handshake") por motivos específicos de
+    // esa máquina (caché de certificados intermedios, políticas locales,
+    // etc). rustls trae sus propias raíces de confianza (Mozilla, vía
+    // webpki-roots) y no depende del almacén de certificados del sistema
+    // operativo, evitando esa clase de fallas.
+    let mut raices = rustls::RootCertStore::empty();
+    raices.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let tls_config = rustls::ClientConfig::builder()
+        .with_root_certificates(raices)
+        .with_no_client_auth();
+    let tls = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
 
     let manager_config = ManagerConfig { recycling_method: RecyclingMethod::Fast };
     let manager = Manager::from_config(pg_config, tls, manager_config);
@@ -96,7 +120,7 @@ pub async fn conectar(connection_string: &str) -> Result<Pool, String> {
     let conn = pool.get().await.map_err(|e| {
         format!(
             "No se pudo conectar a la base de datos. Verificá el connection string y tu conexión a internet. Detalle: {}",
-            e
+            detalle_completo(&e)
         )
     })?;
     conn.simple_query("SELECT 1").await.map_err(|e| e.to_string())?;
