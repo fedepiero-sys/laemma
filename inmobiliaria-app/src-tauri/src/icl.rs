@@ -44,17 +44,37 @@ fn campo_numero(obj: &Value, nombres: &[&str]) -> Option<f64> {
 }
 
 /// Encuentra el arreglo de resultados sin importar como este envuelta la
-/// respuesta (algunas APIs del BCRA devuelven {"results": [...]}, otras
-/// {"results": {"detalle": [...]}} o directamente un arreglo).
-fn extraer_resultados(data: &Value) -> Option<&Vec<Value>> {
+/// respuesta. El catalogo de variables devuelve {"results": [{idVariable,
+/// descripcion, ...}, ...]} directamente, pero la serie historica de una
+/// variable devuelve {"results": [{..., "detalle": [{fecha, valor}, ...]}]}
+/// (un objeto por variable consultada, con el historico adentro de
+/// "detalle") — en ese caso hay que aplanar "detalle" para llegar a los
+/// datos reales.
+fn extraer_resultados(data: &Value) -> Option<Vec<Value>> {
     if let Some(arr) = data.as_array() {
-        return Some(arr);
+        return Some(arr.clone());
     }
     let results = campo(data, &["results", "Results", "resultados"])?;
+
     if let Some(arr) = results.as_array() {
-        return Some(arr);
+        let tiene_detalle = arr
+            .iter()
+            .any(|item| campo(item, &["detalle", "Detalle"]).and_then(|v| v.as_array()).is_some());
+        if tiene_detalle {
+            let mut planos = Vec::new();
+            for item in arr {
+                if let Some(detalle) = campo(item, &["detalle", "Detalle"]).and_then(|v| v.as_array()) {
+                    planos.extend(detalle.iter().cloned());
+                } else {
+                    planos.push(item.clone());
+                }
+            }
+            return Some(planos);
+        }
+        return Some(arr.clone());
     }
-    campo(results, &["detalle", "Detalle"]).and_then(|v| v.as_array())
+
+    campo(results, &["detalle", "Detalle"]).and_then(|v| v.as_array()).cloned()
 }
 
 pub fn cliente_http() -> Result<reqwest::Client, String> {
@@ -97,7 +117,7 @@ pub async fn id_variable_icl(client: &reqwest::Client) -> Result<i64, String> {
         )
     })?;
 
-    for item in resultados {
+    for item in &resultados {
         let descripcion = campo_texto(item, &["descripcion", "Descripcion", "DESCRIPCION"]).unwrap_or_default();
         let d = descripcion.to_uppercase();
         if d.contains("CONTRATOS DE LOCACION") || d.contains("CONTRATOS DE LOCACIÓN") || d.contains("(ICL)") {
@@ -127,7 +147,7 @@ pub async fn valor_en_o_antes(client: &reqwest::Client, id_variable: i64, fecha:
     })?;
 
     let mut mejor: Option<DatoSerie> = None;
-    for item in resultados {
+    for item in &resultados {
         let fecha_item = campo_texto(item, &["fecha", "Fecha"]);
         let valor_item = campo_numero(item, &["valor", "Valor"]);
         if let (Some(f), Some(v)) = (fecha_item, valor_item) {
@@ -144,4 +164,67 @@ pub async fn valor_en_o_antes(client: &reqwest::Client, id_variable: i64, fecha:
             truncar(&data.to_string())
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// JSON real devuelto por api.bcra.gob.ar/estadisticas/v4.0/monetarias/40
+    /// (capturado de un error en producción): los valores vienen agrupados
+    /// bajo results[0].detalle, no directamente en results.
+    const RESPUESTA_SERIE_REAL: &str = r#"{
+        "metadata": {"resultset": {"count": 14, "limit": 1000, "offset": 0}},
+        "results": [{
+            "detalle": [
+                {"fecha": "2026-10-01", "valor": 36.54},
+                {"fecha": "2026-09-30", "valor": 36.52},
+                {"fecha": "2026-09-29", "valor": 36.5},
+                {"fecha": "2026-09-28", "valor": 36.48},
+                {"fecha": "2026-09-27", "valor": 36.45},
+                {"fecha": "2026-09-26", "valor": 36.43},
+                {"fecha": "2026-09-25", "valor": 36.41},
+                {"fecha": "2026-09-24", "valor": 36.39},
+                {"fecha": "2026-09-23", "valor": 36.37},
+                {"fecha": "2026-09-22", "valor": 36.34},
+                {"fecha": "2026-09-21", "valor": 36.32},
+                {"fecha": "2026-09-20", "valor": 36.3},
+                {"fecha": "2026-09-19", "valor": 36.28},
+                {"fecha": "2026-09-18", "valor": 36.25}
+            ]
+        }]
+    }"#;
+
+    #[test]
+    fn extrae_el_valor_mas_reciente_de_una_serie_anidada_en_detalle() {
+        let data: Value = serde_json::from_str(RESPUESTA_SERIE_REAL).unwrap();
+        let resultados = extraer_resultados(&data).expect("debe reconocer el formato con 'detalle'");
+        assert_eq!(resultados.len(), 14);
+
+        let mut mejor: Option<DatoSerie> = None;
+        for item in &resultados {
+            let f = campo_texto(item, &["fecha", "Fecha"]).unwrap();
+            let v = campo_numero(item, &["valor", "Valor"]).unwrap();
+            if mejor.as_ref().map(|m| f > m.fecha).unwrap_or(true) {
+                mejor = Some(DatoSerie { fecha: f, valor: v });
+            }
+        }
+        let mejor = mejor.unwrap();
+        assert_eq!(mejor.fecha, "2026-10-01");
+        assert_eq!(mejor.valor, 36.54);
+    }
+
+    #[test]
+    fn reconoce_un_listado_plano_de_variables() {
+        let data: Value = serde_json::from_str(
+            r#"{"results": [
+                {"idVariable": 1, "descripcion": "Otra variable"},
+                {"idVariable": 40, "descripcion": "Índice para Contratos de Locación (ICL) - Ley 27.551"}
+            ]}"#,
+        )
+        .unwrap();
+        let resultados = extraer_resultados(&data).expect("debe reconocer el listado plano");
+        assert_eq!(resultados.len(), 2);
+        assert_eq!(campo_texto(&resultados[1], &["descripcion"]).unwrap(), "Índice para Contratos de Locación (ICL) - Ley 27.551");
+    }
 }
