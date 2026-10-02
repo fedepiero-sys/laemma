@@ -90,7 +90,12 @@ function fieldHtml(f, value) {
 function openModal(title, fields, values, onSave) {
   modalTitle.textContent = title;
   modalBody.innerHTML = `<div class="form-grid">${fields
-    .map((f) => `<div class="form-field ${f.full ? "full" : ""}"><label>${esc(f.label)}</label>${fieldHtml(f, values?.[f.name])}</div>`)
+    .map(
+      (f) =>
+        `<div class="form-field ${f.full ? "full" : ""}"><label>${esc(f.label)}</label>${fieldHtml(f, values?.[f.name])}${
+          f.hint ? `<small class="field-hint">${esc(f.hint)}</small>` : ""
+        }</div>`
+    )
     .join("")}</div>`;
   modalOverlay.classList.remove("hidden");
 
@@ -446,7 +451,14 @@ function contratoFields() {
     },
     { name: "fecha_inicio", label: "Fecha de inicio", type: "date", required: true },
     { name: "fecha_fin", label: "Fecha de vencimiento", type: "date", required: true },
-    { name: "dia_pago", label: "Día de pago (1-28)", type: "number", default: 10, required: true },
+    {
+      name: "dia_pago",
+      label: "Paga sin recargo del 1 al día (1-28)",
+      type: "number",
+      default: 10,
+      required: true,
+      hint: "Ej: si ponés 10, el inquilino paga sin interés del 1 al 10. Desde el día 11 corre la mora que indica el contrato.",
+    },
     { name: "monto_inicial", label: "Monto de alquiler inicial", type: "number", required: true },
     { name: "comision_porcentaje", label: "Comisión inmobiliaria (%)", type: "number", default: 0 },
     { name: "tasa_mora_diaria", label: "Interés por mora (% diario)", type: "number", default: 0 },

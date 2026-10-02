@@ -160,6 +160,7 @@ body {
 .form-field { display: flex; flex-direction: column; gap: 4px; }
 .form-field.full { grid-column: 1 / -1; }
 .form-field label { font-size: 12.5px; color: var(--text-muted); font-weight: 600; }
+.field-hint { font-size: 11.5px; color: var(--text-muted); font-weight: normal; line-height: 1.4; }
 .form-field input, .form-field select, .form-field textarea {
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 13.5px; font-family: inherit;
 }
