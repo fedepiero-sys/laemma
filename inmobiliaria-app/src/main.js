@@ -569,6 +569,7 @@ document.getElementById("tbl-contratos").addEventListener("click", async (e) => 
 async function abrirActualizaciones(contratoId) {
   const c = byId(state.contratos, contratoId);
   const actualizaciones = await call("get_actualizaciones", { contratoId });
+  const esIcl = c.tipo_actualizacion === "ICL";
   const render = () => {
     const filas = actualizaciones
       .map(
@@ -582,11 +583,58 @@ async function abrirActualizaciones(contratoId) {
         <thead><tr><th>Vigente desde</th><th>Nuevo monto</th><th>Motivo</th><th></th></tr></thead>
         <tbody>${filas || '<tr class="empty-row"><td colspan="4">Sin actualizaciones registradas</td></tr>'}</tbody>
       </table>
+      ${
+        esIcl
+          ? `<div style="margin-bottom:18px; padding:12px; border:1px solid var(--border); border-radius:8px; background:#f9fafb;">
+               <button class="btn-secondary" id="act-calcular-icl" type="button">📊 Calcular con ICL (BCRA)</button>
+               <div id="act-icl-resultado" class="hint" style="margin:8px 0 0;">Próxima actualización prevista: ${fmtDate(c.proxima_actualizacion)}.</div>
+             </div>`
+          : ""
+      }
+      <p class="hint" style="margin:0 0 10px;">También podés escribir el % de aumento y calculamos el monto nuevo solos.</p>
       <div class="form-grid">
-        <div class="form-field"><label>Vigente desde</label><input type="date" id="act-fecha" /></div>
+        <div class="form-field"><label>Vigente desde</label><input type="date" id="act-fecha" value="${esc(c.proxima_actualizacion ?? "")}" /></div>
+        <div class="form-field"><label>Aumento (%)</label><input type="number" id="act-porcentaje" step="any" placeholder="ej: 25" /></div>
         <div class="form-field"><label>Nuevo monto de alquiler</label><input type="number" id="act-monto" /></div>
         <div class="form-field full"><label>Motivo (ej: actualización ICL trimestral)</label><input type="text" id="act-motivo" /></div>
       </div>`;
+
+    document.getElementById("act-porcentaje").addEventListener("input", (e) => {
+      const pct = Number(e.target.value);
+      if (e.target.value === "" || Number.isNaN(pct)) return;
+      document.getElementById("act-monto").value = (c.monto_vigente * (1 + pct / 100)).toFixed(2);
+    });
+
+    if (esIcl) {
+      document.getElementById("act-calcular-icl").addEventListener("click", async () => {
+        const resultadoEl = document.getElementById("act-icl-resultado");
+        resultadoEl.textContent = "Consultando ICL...";
+        const hoy = new Date().toISOString().slice(0, 10);
+        const esFutura = c.proxima_actualizacion > hoy;
+        try {
+          const r = await call(esFutura ? "estimar_actualizacion_icl" : "confirmar_actualizacion_icl", { contratoId });
+          const signo = r.porcentaje_variacion >= 0 ? "+" : "";
+          if (esFutura) {
+            resultadoEl.innerHTML = `Estimado orientativo (el valor real se confirma el ${fmtDate(
+              c.proxima_actualizacion
+            )}): ICL del ${fmtDate(r.fecha_consulta)} = ${r.valor_icl_consulta} → variación ${signo}${r.porcentaje_variacion.toFixed(
+              2
+            )}% → alquiler aprox. <strong>${money(r.monto_estimado)}</strong>. Todavía no lo cargues: volvé a calcular el día de la actualización para traer el valor real.`;
+          } else {
+            document.getElementById("act-fecha").value = c.proxima_actualizacion;
+            document.getElementById("act-monto").value = r.monto_estimado.toFixed(2);
+            document.getElementById("act-porcentaje").value = r.porcentaje_variacion.toFixed(2);
+            document.getElementById("act-motivo").value = "Actualización por índice ICL (BCRA)";
+            resultadoEl.innerHTML = `Valor real: ICL del ${fmtDate(r.fecha_consulta)} = ${r.valor_icl_consulta} → variación ${signo}${r.porcentaje_variacion.toFixed(
+              2
+            )}%. Ya completamos los campos — revisá y confirmá con "Agregar actualización".`;
+          }
+        } catch (err) {
+          resultadoEl.textContent = "No se pudo consultar el ICL. Probá de nuevo.";
+        }
+      });
+    }
+
     modalBody.querySelectorAll("[data-del-act]").forEach((b) =>
       b.addEventListener("click", async () => {
         await call("eliminar_actualizacion", { id: Number(b.dataset.delAct) });
