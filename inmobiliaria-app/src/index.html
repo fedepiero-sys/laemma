@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Inmobiliaria App</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-icon">🏠</span>
+        <span class="brand-name">Inmobiliaria App</span>
+      </div>
+      <nav id="nav">
+        <button class="nav-btn active" data-view="dashboard">📊 Tablero de control</button>
+        <button class="nav-btn" data-view="inmuebles">🏢 Inmuebles</button>
+        <button class="nav-btn" data-view="propietarios">🧑‍💼 Propietarios</button>
+        <button class="nav-btn" data-view="inquilinos">🧑 Inquilinos</button>
+        <button class="nav-btn" data-view="garantes">🛡️ Garantes</button>
+        <button class="nav-btn" data-view="contratos">📄 Contratos</button>
+        <button class="nav-btn" data-view="ingresos">💰 Ingresos (recibos)</button>
+        <button class="nav-btn" data-view="egresos">🏦 Egresos (comisiones)</button>
+      </nav>
+    </aside>
+
+    <main class="content">
+      <!-- DASHBOARD -->
+      <section id="view-dashboard" class="view active">
+        <header class="view-header">
+          <h1>Tablero de control</h1>
+        </header>
+        <div class="dash-cards">
+          <div class="card card-metric">
+            <span class="metric-label">Contratos activos</span>
+            <span class="metric-value" id="dash-contratos-activos">—</span>
+          </div>
+          <div class="card card-metric card-danger">
+            <span class="metric-label">Total adeudado</span>
+            <span class="metric-value" id="dash-total-adeudado">—</span>
+          </div>
+          <div class="card card-metric card-warning">
+            <span class="metric-label">Contratos con deuda</span>
+            <span class="metric-value" id="dash-cant-deudas">—</span>
+          </div>
+          <div class="card card-metric card-info">
+            <span class="metric-label">Vencimientos próximos</span>
+            <span class="metric-value" id="dash-cant-vencimientos">—</span>
+          </div>
+        </div>
+
+        <div class="dash-section">
+          <div class="dash-section-header">
+            <h2>💸 Deudas de inquilinos</h2>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>Inmueble</th><th>Inquilino</th><th>Períodos impagos</th><th>Monto adeudado (con mora a hoy)</th></tr></thead>
+            <tbody id="tbl-deudas"></tbody>
+          </table>
+        </div>
+
+        <div class="dash-section">
+          <div class="dash-section-header">
+            <h2>📅 Próximos vencimientos de contrato</h2>
+            <label class="inline-field">Ventana (días)
+              <input type="number" id="dash-dias-venc" value="60" min="0" style="width:70px" />
+            </label>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>Inmueble</th><th>Inquilino</th><th>Propietario</th><th>Vence</th><th>Días restantes</th></tr></thead>
+            <tbody id="tbl-vencimientos"></tbody>
+          </table>
+        </div>
+
+        <div class="dash-section">
+          <div class="dash-section-header">
+            <h2>📈 Próximas actualizaciones de alquiler</h2>
+            <label class="inline-field">Ventana (días)
+              <input type="number" id="dash-dias-act" value="30" min="0" style="width:70px" />
+            </label>
+          </div>
+          <table class="data-table">
+            <thead><tr><th>Inmueble</th><th>Inquilino</th><th>Fecha prevista</th><th>Días restantes</th><th>Monto vigente</th></tr></thead>
+            <tbody id="tbl-actualizaciones"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- INMUEBLES -->
+      <section id="view-inmuebles" class="view">
+        <header class="view-header">
+          <h1>Inmuebles</h1>
+          <button class="btn-primary" id="btn-nuevo-inmueble">+ Nuevo inmueble</button>
+        </header>
+        <table class="data-table">
+          <thead><tr><th>Dirección</th><th>Tipo</th><th>Superficie</th><th>Ambientes</th><th>Propietario</th><th></th></tr></thead>
+          <tbody id="tbl-inmuebles"></tbody>
+        </table>
+      </section>
+
+      <!-- PROPIETARIOS -->
+      <section id="view-propietarios" class="view">
+        <header class="view-header">
+          <h1>Propietarios</h1>
+          <button class="btn-primary" id="btn-nuevo-propietario">+ Nuevo propietario</button>
+        </header>
+        <table class="data-table">
+          <thead><tr><th>Nombre</th><th>DNI/CUIT</th><th>Teléfono</th><th>Email</th><th>Datos bancarios</th><th></th></tr></thead>
+          <tbody id="tbl-propietarios"></tbody>
+        </table>
+      </section>
+
+      <!-- INQUILINOS -->
+      <section id="view-inquilinos" class="view">
+        <header class="view-header">
+          <h1>Inquilinos</h1>
+          <button class="btn-primary" id="btn-nuevo-inquilino">+ Nuevo inquilino</button>
+        </header>
+        <table class="data-table">
+          <thead><tr><th>Nombre</th><th>DNI/CUIT</th><th>Teléfono</th><th>Email</th><th>Dirección</th><th></th></tr></thead>
+          <tbody id="tbl-inquilinos"></tbody>
+        </table>
+      </section>
+
+      <!-- GARANTES -->
+      <section id="view-garantes" class="view">
+        <header class="view-header">
+          <h1>Garantes</h1>
+          <button class="btn-primary" id="btn-nuevo-garante">+ Nuevo garante</button>
+        </header>
+        <table class="data-table">
+          <thead><tr><th>Nombre</th><th>DNI/CUIT</th><th>Teléfono</th><th>Email</th><th>Dirección</th><th></th></tr></thead>
+          <tbody id="tbl-garantes"></tbody>
+        </table>
+      </section>
+
+      <!-- CONTRATOS -->
+      <section id="view-contratos" class="view">
+        <header class="view-header">
+          <h1>Contratos de alquiler</h1>
+          <button class="btn-primary" id="btn-nuevo-contrato">+ Nuevo contrato</button>
+        </header>
+        <table class="data-table">
+          <thead><tr><th>Inmueble</th><th>Inquilino</th><th>Vigencia</th><th>Alquiler vigente</th><th>Próx. actualización</th><th>Estado</th><th></th></tr></thead>
+          <tbody id="tbl-contratos"></tbody>
+        </table>
+      </section>
+
+      <!-- INGRESOS -->
+      <section id="view-ingresos" class="view">
+        <header class="view-header">
+          <h1>Ingresos — Recibos de alquiler</h1>
+          <button class="btn-primary" id="btn-nuevo-pago">+ Registrar pago</button>
+        </header>
+        <table class="data-table">
+          <thead><tr><th>Recibo N°</th><th>Fecha</th><th>Inmueble / Inquilino</th><th>Período</th><th>Alquiler</th><th>Mora</th><th>Total</th><th></th></tr></thead>
+          <tbody id="tbl-pagos"></tbody>
+        </table>
+      </section>
+
+      <!-- EGRESOS -->
+      <section id="view-egresos" class="view">
+        <header class="view-header">
+          <h1>Egresos — Comisiones a liquidar</h1>
+        </header>
+        <p class="hint">Generá el comprobante de liquidación al propietario a partir de un recibo de alquiler ya cobrado.</p>
+        <table class="data-table">
+          <thead><tr><th>Comprobante N°</th><th>Fecha</th><th>Propietario</th><th>Alquiler</th><th>Comisión</th><th>Neto a transferir</th><th></th></tr></thead>
+          <tbody id="tbl-liquidaciones"></tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+
+  <!-- Modal genérico para formularios -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-title">Título</h2>
+        <button id="modal-close" class="modal-close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer">
+        <button id="modal-cancel" class="btn-secondary">Cancelar</button>
+        <button id="modal-save" class="btn-primary">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de impresión (recibo / comprobante) -->
+  <div id="print-overlay" class="modal-overlay hidden">
+    <div class="modal modal-print">
+      <div class="modal-header no-print">
+        <h2>Vista previa</h2>
+        <button id="print-close" class="modal-close">✕</button>
+      </div>
+      <div id="print-body" class="print-body"></div>
+      <div class="modal-footer no-print">
+        <button id="print-close-2" class="btn-secondary">Cerrar</button>
+        <button id="print-now" class="btn-primary">🖨️ Imprimir / Guardar PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
