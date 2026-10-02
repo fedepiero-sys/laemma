@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Inmobiliaria App",
+  "productName": "Gestión Inmobiliaria",
   "version": "0.1.0",
   "identifier": "com.inmobiliaria.app",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Inmobiliaria App",
+        "title": "Gestión Inmobiliaria",
         "width": 1280,
         "height": 820,
         "minWidth": 980,

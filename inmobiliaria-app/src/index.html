@@ -3,26 +3,28 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Inmobiliaria App</title>
+  <title>Gestión Inmobiliaria</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div id="app">
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-icon">🏠</span>
-        <span class="brand-name">Inmobiliaria App</span>
+        <span class="brand-icon">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v4a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V10"/></svg>
+        </span>
+        <span class="brand-name">Gestión Inmobiliaria</span>
       </div>
       <nav id="nav">
-        <button class="nav-btn active" data-view="dashboard">📊 Tablero de control</button>
-        <button class="nav-btn" data-view="inmuebles">🏢 Inmuebles</button>
-        <button class="nav-btn" data-view="propietarios">🧑‍💼 Propietarios</button>
-        <button class="nav-btn" data-view="inquilinos">🧑 Inquilinos</button>
-        <button class="nav-btn" data-view="garantes">🛡️ Garantes</button>
-        <button class="nav-btn" data-view="contratos">📄 Contratos</button>
-        <button class="nav-btn" data-view="ingresos">💰 Ingresos (recibos)</button>
-        <button class="nav-btn" data-view="egresos">🏦 Egresos (comisiones)</button>
-        <button class="nav-btn" data-view="usuarios">👤 Usuarios</button>
+        <button class="nav-btn active" data-view="dashboard"><svg class="icon" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg> Tablero de control</button>
+        <button class="nav-btn" data-view="inmuebles"><svg class="icon" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" rx="1"/><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="2" x2="10" y2="22"/></svg> Inmuebles</button>
+        <button class="nav-btn" data-view="propietarios"><svg class="icon" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg> Propietarios</button>
+        <button class="nav-btn" data-view="inquilinos"><svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a8 8 0 0 1 16 0v1"/></svg> Inquilinos</button>
+        <button class="nav-btn" data-view="garantes"><svg class="icon" viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6l8-4z"/></svg> Garantes</button>
+        <button class="nav-btn" data-view="contratos"><svg class="icon" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg> Contratos</button>
+        <button class="nav-btn" data-view="ingresos"><svg class="icon" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/></svg> Ingresos (recibos)</button>
+        <button class="nav-btn" data-view="egresos"><svg class="icon" viewBox="0 0 24 24"><line x1="3" y1="22" x2="21" y2="22"/><line x1="6" y1="18" x2="6" y2="11"/><line x1="10" y1="18" x2="10" y2="11"/><line x1="14" y1="18" x2="14" y2="11"/><line x1="18" y1="18" x2="18" y2="11"/><polygon points="12 2 21 8 3 8"/></svg> Egresos (comisiones)</button>
+        <button class="nav-btn" data-view="usuarios"><svg class="icon" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Usuarios</button>
       </nav>
       <div class="sidebar-footer">
         <div class="user-chip">
@@ -60,7 +62,7 @@
 
         <div class="dash-section">
           <div class="dash-section-header">
-            <h2>💸 Deudas de inquilinos</h2>
+            <h2><svg class="icon" viewBox="0 0 24 24"><path d="M12 2L2 20h20L12 2z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Deudas de inquilinos</h2>
           </div>
           <table class="data-table">
             <thead><tr><th>Inmueble</th><th>Inquilino</th><th>Períodos impagos</th><th>Monto adeudado (con mora a hoy)</th></tr></thead>
@@ -70,7 +72,7 @@
 
         <div class="dash-section">
           <div class="dash-section-header">
-            <h2>📅 Próximos vencimientos de contrato</h2>
+            <h2><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Próximos vencimientos de contrato</h2>
             <label class="inline-field">Ventana (días)
               <input type="number" id="dash-dias-venc" value="60" min="0" style="width:70px" />
             </label>
@@ -83,7 +85,7 @@
 
         <div class="dash-section">
           <div class="dash-section-header">
-            <h2>📈 Próximas actualizaciones de alquiler</h2>
+            <h2><svg class="icon" viewBox="0 0 24 24"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg> Próximas actualizaciones de alquiler</h2>
             <label class="inline-field">Ventana (días)
               <input type="number" id="dash-dias-act" value="30" min="0" style="width:70px" />
             </label>
@@ -96,7 +98,7 @@
 
         <div class="dash-section">
           <div class="dash-section-header">
-            <h2>🎂 Próximos cumpleaños</h2>
+            <h2><svg class="icon" viewBox="0 0 24 24"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg> Próximos cumpleaños</h2>
             <label class="inline-field">Ventana (días)
               <input type="number" id="dash-dias-cumple" value="30" min="0" style="width:70px" />
             </label>
@@ -210,7 +212,9 @@
   <div id="conexion-screen" class="login-screen hidden">
     <div class="login-card login-card-ancha">
       <div class="login-brand">
-        <span class="brand-icon">🔌</span>
+        <span class="brand-icon">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v3a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
+        </span>
         <h1>Conectar con la base de datos</h1>
       </div>
       <p class="login-subtitle">
@@ -236,8 +240,10 @@
   <div id="login-screen" class="login-screen hidden">
     <div class="login-card">
       <div class="login-brand">
-        <span class="brand-icon">🏠</span>
-        <h1>Inmobiliaria App</h1>
+        <span class="brand-icon">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v4a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1V10"/></svg>
+        </span>
+        <h1>Gestión Inmobiliaria</h1>
       </div>
       <p class="login-subtitle" id="login-subtitle">Ingresá tu usuario y contraseña</p>
       <form id="login-form">
@@ -284,7 +290,7 @@
       <div id="print-body" class="print-body"></div>
       <div class="modal-footer no-print">
         <button id="print-close-2" class="btn-secondary">Cerrar</button>
-        <button id="print-now" class="btn-primary">🖨️ Imprimir / Guardar PDF</button>
+        <button id="print-now" class="btn-primary"><svg class="icon" viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg> Imprimir / Guardar PDF</button>
       </div>
     </div>
   </div>

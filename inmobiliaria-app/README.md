@@ -1,4 +1,4 @@
-# Inmobiliaria App
+# Gestión Inmobiliaria
 
 Programa de escritorio para gestión de alquileres: propietarios, inquilinos,
 garantes, inmuebles, contratos, ingresos (recibos de alquiler) y egresos
@@ -91,8 +91,8 @@ npm run tauri build
 
 Al finalizar, los instaladores quedan en:
 
-- `src-tauri/target/release/bundle/nsis/Inmobiliaria App_0.1.0_x64-setup.exe`
-- `src-tauri/target/release/bundle/msi/Inmobiliaria App_0.1.0_x64_en-US.msi`
+- `src-tauri/target/release/bundle/nsis/Gestión Inmobiliaria_0.1.0_x64-setup.exe`
+- `src-tauri/target/release/bundle/msi/Gestión Inmobiliaria_0.1.0_x64_en-US.msi`
 
 Cualquiera de los dos instala el programa normalmente en la PC (acceso
 directo, desinstalador, etc.). Los datos viven en Supabase, no en la PC, así
