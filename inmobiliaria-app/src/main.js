@@ -889,11 +889,20 @@ async function renderDashboard() {
         .map((x) => {
           const pill = x.dias_restantes < 0 ? "pill-danger" : "pill-warning";
           const txt = x.dias_restantes < 0 ? `Atrasada ${Math.abs(x.dias_restantes)} días` : `${x.dias_restantes} días`;
+          let celdaIndice;
+          if (x.tipo_actualizacion === "ICL") {
+            celdaIndice =
+              x.dias_restantes > 0
+                ? `<button class="btn-link" data-action="icl-estimar" data-id="${x.contrato_id}">🔄 Estimar con ICL</button>`
+                : `<button class="btn-link" data-action="icl-real" data-id="${x.contrato_id}" data-fecha="${x.fecha_prevista}">🔄 Traer valor real ICL</button>`;
+          } else {
+            celdaIndice = esc(x.tipo_actualizacion || "-");
+          }
           return `<tr><td>${esc(x.inmueble_direccion)}</td><td>${esc(x.inquilino_nombre)}</td><td>${fmtDate(x.fecha_prevista)}</td>
-          <td><span class="pill ${pill}">${txt}</span></td><td>${money(x.monto_vigente)}</td></tr>`;
+          <td><span class="pill ${pill}">${txt}</span></td><td>${money(x.monto_vigente)}</td><td>${celdaIndice}</td></tr>`;
         })
         .join("")
-    : `<tr class="empty-row"><td colspan="5">Sin actualizaciones próximas</td></tr>`;
+    : `<tr class="empty-row"><td colspan="6">Sin actualizaciones próximas</td></tr>`;
 
   const tblCumple = document.getElementById("tbl-cumpleanos");
   tblCumple.innerHTML = d.cumpleanos_proximos.length
@@ -911,6 +920,51 @@ async function renderDashboard() {
 document.getElementById("dash-dias-venc").addEventListener("change", renderDashboard);
 document.getElementById("dash-dias-act").addEventListener("change", renderDashboard);
 document.getElementById("dash-dias-cumple").addEventListener("change", renderDashboard);
+
+// ---------- actualización de alquiler vía índice ICL (BCRA) ----------
+
+function resumenIcl(r) {
+  const signo = r.porcentaje_variacion >= 0 ? "+" : "";
+  return `${money(r.monto_estimado)} <span class="hint" style="margin:0">(${signo}${r.porcentaje_variacion.toFixed(2)}% · ICL ${fmtDate(r.fecha_consulta)}: ${r.valor_icl_consulta})</span>`;
+}
+
+document.getElementById("tbl-actualizaciones").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  const contratoId = Number(btn.dataset.id);
+  const celda = btn.closest("td");
+
+  if (btn.dataset.action === "icl-estimar") {
+    celda.textContent = "Consultando ICL...";
+    try {
+      const r = await call("estimar_actualizacion_icl", { contratoId });
+      celda.innerHTML = `${resumenIcl(r)}<br><small class="hint" style="margin:0">Aproximado — el valor real se confirma el día de la actualización</small>`;
+    } catch (err) {
+      celda.innerHTML = `<button class="btn-link" data-action="icl-estimar" data-id="${contratoId}">🔄 Reintentar</button>`;
+    }
+  }
+
+  if (btn.dataset.action === "icl-real") {
+    const fechaVigencia = btn.dataset.fecha;
+    celda.textContent = "Consultando ICL...";
+    try {
+      const r = await call("confirmar_actualizacion_icl", { contratoId });
+      celda.innerHTML = `${resumenIcl(r)}<br><button class="btn-link" data-action="icl-aplicar" data-id="${contratoId}" data-monto="${r.monto_estimado}" data-fecha="${fechaVigencia}">✅ Aplicar actualización</button>`;
+    } catch (err) {
+      celda.innerHTML = `<button class="btn-link" data-action="icl-real" data-id="${contratoId}" data-fecha="${fechaVigencia}">🔄 Reintentar</button>`;
+    }
+  }
+
+  if (btn.dataset.action === "icl-aplicar") {
+    const monto_nuevo = Number(btn.dataset.monto);
+    const fecha_vigencia = btn.dataset.fecha;
+    await call("agregar_actualizacion", {
+      actualizacion: { id: null, contrato_id: contratoId, fecha_vigencia, monto_nuevo, motivo: "Actualización por índice ICL (BCRA)" },
+    });
+    toast("Actualización aplicada según ICL");
+    await loadAll();
+  }
+});
 
 // ---------- arranque ----------
 

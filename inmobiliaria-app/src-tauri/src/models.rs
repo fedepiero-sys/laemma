@@ -193,9 +193,22 @@ pub struct ActualizacionPendiente {
     pub contrato_id: i64,
     pub inmueble_direccion: String,
     pub inquilino_nombre: String,
+    pub tipo_actualizacion: String,
     pub fecha_prevista: String,
     pub dias_restantes: i64,
     pub monto_vigente: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EstimacionIcl {
+    pub es_valor_real: bool,
+    pub fecha_referencia: String,
+    pub valor_icl_referencia: f64,
+    pub fecha_consulta: String,
+    pub valor_icl_consulta: f64,
+    pub porcentaje_variacion: f64,
+    pub monto_actual: f64,
+    pub monto_estimado: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod icl;
 mod models;
 
 use commands::DbState;
@@ -49,6 +50,8 @@ pub fn run() {
             commands::eliminar_liquidacion,
             commands::get_comprobante,
             commands::get_dashboard,
+            commands::estimar_actualizacion_icl,
+            commands::confirmar_actualizacion_icl,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -85,3 +85,26 @@ cálculo de mora, montos vigentes y el tablero de control).
 - La **próxima actualización** se calcula sumando la frecuencia configurada
   (en meses) a la fecha de la última actualización registrada, o a la fecha
   de inicio del contrato si todavía no hubo ninguna.
+
+## Actualización automática por índice ICL (BCRA)
+
+Para contratos con tipo de actualización "ICL", el tablero de control agrega
+una columna con un botón que consulta en vivo la API pública del BCRA
+(`api.bcra.gob.ar/estadisticas/v4.0/monetarias`, variable ICL):
+
+- **Mientras falta más de un mes** para la actualización: el botón "Estimar
+  con ICL" compara el valor del índice de hoy contra el valor que tenía
+  cuando se fijó el monto actual, y muestra un porcentaje y monto
+  **aproximados** (el valor real todavía no existe, porque corresponde a una
+  fecha futura).
+- **El día de la actualización (o después)**: el botón "Traer valor real ICL"
+  consulta el valor del índice publicado exactamente para esa fecha y
+  calcula el monto definitivo. Desde ahí se puede aplicar directamente con
+  un clic, lo que registra la actualización del contrato sin tipear nada a
+  mano.
+
+Esto requiere que la PC tenga conexión a internet en el momento de
+consultar; si no hay conexión o el BCRA no responde, se muestra un aviso y
+un botón para reintentar. El id de la variable ICL se busca por nombre en el
+catálogo del BCRA en cada consulta (por si cambiara con el tiempo); si esa
+búsqueda falla, se usa como respaldo el id conocido actualmente (40).

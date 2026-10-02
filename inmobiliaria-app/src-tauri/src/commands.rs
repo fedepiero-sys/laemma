@@ -1,3 +1,4 @@
+use crate::icl;
 use crate::models::*;
 use chrono::{Datelike, NaiveDate};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -81,7 +82,10 @@ fn monto_vigente(conn: &Connection, contrato_id: i64, fecha: NaiveDate) -> rusql
     Ok(actualizado.unwrap_or(monto_inicial))
 }
 
-fn proxima_fecha_actualizacion(conn: &Connection, contrato_id: i64, fecha_inicio: NaiveDate, frecuencia_meses: i64) -> rusqlite::Result<NaiveDate> {
+/// Fecha de vigencia de la ultima actualizacion registrada, o la fecha de
+/// inicio del contrato si todavia no tuvo ninguna. Es el punto de referencia
+/// contra el que se mide la variacion del indice para la proxima actualizacion.
+fn fecha_base_actualizacion(conn: &Connection, contrato_id: i64, fecha_inicio: NaiveDate) -> rusqlite::Result<NaiveDate> {
     let ultima: Option<String> = conn
         .query_row(
             "SELECT fecha_vigencia FROM actualizaciones WHERE contrato_id = ?1 ORDER BY fecha_vigencia DESC LIMIT 1",
@@ -89,10 +93,14 @@ fn proxima_fecha_actualizacion(conn: &Connection, contrato_id: i64, fecha_inicio
             |r| r.get(0),
         )
         .optional()?;
-    let base = match ultima {
+    Ok(match ultima {
         Some(f) => parse_date(&f),
         None => fecha_inicio,
-    };
+    })
+}
+
+fn proxima_fecha_actualizacion(conn: &Connection, contrato_id: i64, fecha_inicio: NaiveDate, frecuencia_meses: i64) -> rusqlite::Result<NaiveDate> {
+    let base = fecha_base_actualizacion(conn, contrato_id, fecha_inicio)?;
     Ok(add_months(base, frecuencia_meses.max(1)))
 }
 
@@ -747,12 +755,13 @@ pub fn get_dashboard(state: State<DbState>, dias_vencimiento: i64, dias_actualiz
         dia_pago: i64,
         tasa_mora_diaria: f64,
         frecuencia_actualizacion_meses: i64,
+        tipo_actualizacion: String,
     }
 
     let contratos: Vec<ContratoBasico> = {
         let mut stmt = conn
             .prepare(
-                "SELECT c.id, im.direccion, iq.nombre, p.nombre, c.fecha_inicio, c.fecha_fin, c.dia_pago, c.tasa_mora_diaria, c.frecuencia_actualizacion_meses
+                "SELECT c.id, im.direccion, iq.nombre, p.nombre, c.fecha_inicio, c.fecha_fin, c.dia_pago, c.tasa_mora_diaria, c.frecuencia_actualizacion_meses, c.tipo_actualizacion
                  FROM contratos c
                  JOIN inmuebles im ON im.id = c.inmueble_id
                  JOIN propietarios p ON p.id = im.propietario_id
@@ -772,6 +781,7 @@ pub fn get_dashboard(state: State<DbState>, dias_vencimiento: i64, dias_actualiz
                     dia_pago: r.get(6)?,
                     tasa_mora_diaria: r.get(7)?,
                     frecuencia_actualizacion_meses: r.get(8)?,
+                    tipo_actualizacion: r.get(9)?,
                 })
             })
             .map_err(map_err)?;
@@ -844,6 +854,7 @@ pub fn get_dashboard(state: State<DbState>, dias_vencimiento: i64, dias_actualiz
                 contrato_id: c.id,
                 inmueble_direccion: c.inmueble_direccion.clone(),
                 inquilino_nombre: c.inquilino_nombre.clone(),
+                tipo_actualizacion: c.tipo_actualizacion.clone(),
                 fecha_prevista: proxima.format("%Y-%m-%d").to_string(),
                 dias_restantes: dias_restantes_act,
                 monto_vigente: monto_vig,
@@ -899,4 +910,71 @@ pub fn get_dashboard(state: State<DbState>, dias_vencimiento: i64, dias_actualiz
         total_contratos_activos: contratos.len() as i64,
         total_adeudado,
     })
+}
+
+// ---------- Actualización por índice ICL (BCRA) ----------
+
+/// Consulta la API del BCRA y compara el ICL en `fecha_objetivo` contra el ICL
+/// vigente cuando se fijó el monto actual del contrato. `fecha_objetivo` es
+/// "hoy" para una estimación aproximada (todavía no se sabe el valor final del
+/// día de la actualización) o la fecha real de la próxima actualización para
+/// obtener el valor definitivo.
+async fn calcular_con_icl(conn_mutex: &Mutex<Connection>, contrato_id: i64, fecha_objetivo_es_hoy: bool) -> Result<EstimacionIcl, String> {
+    let (tipo_actualizacion, monto_actual, fecha_referencia, fecha_objetivo) = {
+        let conn = conn_mutex.lock().map_err(map_err)?;
+        let (fecha_inicio_s, frecuencia, tipo_actualizacion): (String, i64, String) = conn
+            .query_row(
+                "SELECT fecha_inicio, frecuencia_actualizacion_meses, tipo_actualizacion FROM contratos WHERE id=?1",
+                params![contrato_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(map_err)?;
+        let fecha_inicio = parse_date(&fecha_inicio_s);
+        let fecha_referencia = fecha_base_actualizacion(&conn, contrato_id, fecha_inicio).map_err(map_err)?;
+        let fecha_objetivo = if fecha_objetivo_es_hoy {
+            today()
+        } else {
+            proxima_fecha_actualizacion(&conn, contrato_id, fecha_inicio, frecuencia).map_err(map_err)?
+        };
+        let monto_actual = monto_vigente(&conn, contrato_id, today()).map_err(map_err)?;
+        (tipo_actualizacion, monto_actual, fecha_referencia, fecha_objetivo)
+    };
+
+    if tipo_actualizacion != "ICL" {
+        return Err("Este contrato no usa el índice ICL como esquema de actualización".to_string());
+    }
+
+    let client = icl::cliente_http()?;
+    let id_variable = match icl::id_variable_icl(&client).await {
+        Ok(id) => id,
+        Err(_) => icl::ICL_ID_FALLBACK,
+    };
+    let dato_referencia = icl::valor_en_o_antes(&client, id_variable, fecha_referencia).await?;
+    let dato_objetivo = icl::valor_en_o_antes(&client, id_variable, fecha_objetivo).await?;
+    let ratio = dato_objetivo.valor / dato_referencia.valor;
+
+    Ok(EstimacionIcl {
+        es_valor_real: !fecha_objetivo_es_hoy,
+        fecha_referencia: dato_referencia.fecha,
+        valor_icl_referencia: dato_referencia.valor,
+        fecha_consulta: dato_objetivo.fecha,
+        valor_icl_consulta: dato_objetivo.valor,
+        porcentaje_variacion: (ratio - 1.0) * 100.0,
+        monto_actual,
+        monto_estimado: monto_actual * ratio,
+    })
+}
+
+/// Para usar un mes antes de la actualización: compara el ICL de hoy contra
+/// el ICL de referencia, como aproximación de a cuánto va a quedar el alquiler.
+#[tauri::command]
+pub async fn estimar_actualizacion_icl(state: State<'_, DbState>, contrato_id: i64) -> Result<EstimacionIcl, String> {
+    calcular_con_icl(&state.0, contrato_id, true).await
+}
+
+/// Para usar el día de la actualización (o después): trae el valor real del
+/// ICL para esa fecha exacta.
+#[tauri::command]
+pub async fn confirmar_actualizacion_icl(state: State<'_, DbState>, contrato_id: i64) -> Result<EstimacionIcl, String> {
+    calcular_con_icl(&state.0, contrato_id, false).await
 }
