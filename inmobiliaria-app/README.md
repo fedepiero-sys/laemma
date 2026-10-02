@@ -49,11 +49,15 @@ usuarios, etc. — no hace falta configurar nada más por PC.
 ## Puesta en marcha con Supabase
 
 1. Crear una cuenta y un proyecto gratis en [supabase.com](https://supabase.com).
-2. En el proyecto, ir a **Connect → ORM** y copiar el valor de `DATABASE_URL`
-   (es el connection string del **pooler**, con host terminado en
-   `pooler.supabase.com`). **No usar** la pestaña "Direct connection": esa
-   conexión es IPv6-only en el plan gratis, y muchas redes (incluidas varias
-   de Argentina) no tienen salida IPv6.
+2. En el proyecto, ir a **Connect → ORM** y copiar el valor de `DIRECT_URL`
+   (connection string del **pooler en modo sesión**, puerto `5432`, host
+   terminado en `pooler.supabase.com`). **No usar**:
+   - la pestaña "Direct connection": esa conexión es IPv6-only en el plan
+     gratis, y muchas redes (incluidas varias de Argentina) no tienen salida
+     IPv6;
+   - el `DATABASE_URL` (pooler en modo **transacción**, puerto `6543`, con
+     `?pgbouncer=true`): no soporta bien las consultas preparadas que usa
+     esta app, puede dar errores intermitentes raros bajo uso concurrente.
 3. Pegar ese string en la app la primera vez que se abra en cada PC. El
    esquema de tablas se crea solo en el primer connect — no hace falta
    correr ningún SQL a mano.

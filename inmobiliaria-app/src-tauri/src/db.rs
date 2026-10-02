@@ -28,8 +28,25 @@ pub fn guardar_connection_string(data_dir: &std::path::Path, connection_string: 
 /// Arma un pool de conexiones contra Postgres (Supabase) y lo prueba con un
 /// SELECT 1 antes de darlo por bueno, para detectar credenciales o red
 /// incorrectas de entrada en vez de que fallen recién en el primer uso real.
+/// El parser de tokio-postgres no reconoce el parámetro "pgbouncer=true"
+/// (presente en el string del pooler de Supabase en modo transacción) y
+/// rechaza el connection string entero por eso. Lo sacamos puntualmente,
+/// conservando cualquier otro parámetro válido (sslmode, etc.) que sí
+/// entienda, en vez de descartar toda la query string.
+fn quitar_query_params(connection_string: &str) -> String {
+    let Some((base, query)) = connection_string.split_once('?') else {
+        return connection_string.to_string();
+    };
+    let params: Vec<&str> = query.split('&').filter(|p| !p.starts_with("pgbouncer=")).collect();
+    if params.is_empty() {
+        base.to_string()
+    } else {
+        format!("{}?{}", base, params.join("&"))
+    }
+}
+
 pub async fn conectar(connection_string: &str) -> Result<Pool, String> {
-    let pg_config: PgConfig = connection_string
+    let pg_config: PgConfig = quitar_query_params(connection_string)
         .parse()
         .map_err(|e| format!("El connection string no tiene un formato válido: {}", e))?;
 
@@ -198,3 +215,28 @@ CREATE TABLE IF NOT EXISTS liquidaciones (
     notas               TEXT
 );
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Los dos formatos de connection string que Supabase muestra en
+    /// "Connect → ORM": el pooler de sesión (sin query params, el que
+    /// recomendamos) y el pooler de transacción (con "?pgbouncer=true", que
+    /// alguien puede pegar igual porque también dice "DATABASE_URL"). Ambos
+    /// tienen que poder parsearse, y cualquier otro parámetro (sslmode, etc.)
+    /// que venga junto con pgbouncer tiene que conservarse.
+    #[test]
+    fn parsea_ambos_formatos_del_pooler_de_supabase() {
+        let sesion = "postgresql://postgres.abcxyz:p%40ss&w0rd@aws-0-us-east-1.pooler.supabase.com:5432/postgres";
+        let transaccion = "postgresql://postgres.abcxyz:p%40ss&w0rd@aws-0-us-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true";
+        let con_otro_param = "postgresql://postgres:x@localhost:5432/postgres?pgbouncer=true&sslmode=disable";
+
+        quitar_query_params(sesion).parse::<PgConfig>().expect("el pooler de sesión debe parsear");
+        quitar_query_params(transaccion).parse::<PgConfig>().expect("el pooler de transacción (con query params) debe parsear igual");
+
+        let limpio = quitar_query_params(con_otro_param);
+        assert!(limpio.contains("sslmode=disable"), "no debe borrar otros parámetros válidos: {}", limpio);
+        assert!(!limpio.contains("pgbouncer"), "debe borrar específicamente pgbouncer: {}", limpio);
+    }
+}
