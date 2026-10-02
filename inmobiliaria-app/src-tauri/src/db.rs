@@ -25,9 +25,36 @@ pub fn guardar_connection_string(data_dir: &std::path::Path, connection_string: 
     std::fs::write(archivo_config(data_dir), json).map_err(|e| e.to_string())
 }
 
-/// Arma un pool de conexiones contra Postgres (Supabase) y lo prueba con un
-/// SELECT 1 antes de darlo por bueno, para detectar credenciales o red
-/// incorrectas de entrada en vez de que fallen recién en el primer uso real.
+/// Las páginas de Supabase muestran el connection string como una línea de
+/// archivo .env, por ejemplo `DATABASE_URL="postgresql://..."`. Si alguien
+/// copia esa línea entera (con el nombre de la variable y las comillas) en
+/// vez de solo la URL, el parser lo rechaza entero. Si el texto antes del
+/// primer "=" es un nombre de variable válido (sin "://", ":" ni "/") y lo
+/// que sigue empieza con comillas o con "postgres", asumimos que es ese
+/// prefijo y lo sacamos. Después sacamos comillas que envuelvan todo el
+/// string, y espacios/saltos de línea de copiar y pegar.
+fn quitar_prefijo_de_env(connection_string: &str) -> &str {
+    let s = connection_string.trim();
+    let s = match s.split_once('=') {
+        Some((nombre, resto))
+            if !nombre.is_empty()
+                && nombre.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && (resto.trim_start().starts_with(['"', '\'']) || resto.trim_start().starts_with("postgres")) =>
+        {
+            resto.trim()
+        }
+        _ => s,
+    };
+    fn quitar_comillas(s: &str, comilla: char) -> &str {
+        if s.len() >= 2 && s.starts_with(comilla) && s.ends_with(comilla) {
+            &s[1..s.len() - 1]
+        } else {
+            s
+        }
+    }
+    quitar_comillas(quitar_comillas(s, '"'), '\'').trim()
+}
+
 /// El parser de tokio-postgres no reconoce el parámetro "pgbouncer=true"
 /// (presente en el string del pooler de Supabase en modo transacción) y
 /// rechaza el connection string entero por eso. Lo sacamos puntualmente,
@@ -45,8 +72,12 @@ fn quitar_query_params(connection_string: &str) -> String {
     }
 }
 
+/// Arma un pool de conexiones contra Postgres (Supabase) y lo prueba con un
+/// SELECT 1 antes de darlo por bueno, para detectar credenciales o red
+/// incorrectas de entrada en vez de que fallen recién en el primer uso real.
 pub async fn conectar(connection_string: &str) -> Result<Pool, String> {
-    let pg_config: PgConfig = quitar_query_params(connection_string)
+    let limpio = quitar_query_params(quitar_prefijo_de_env(connection_string));
+    let pg_config: PgConfig = limpio
         .parse()
         .map_err(|e| format!("El connection string no tiene un formato válido: {}", e))?;
 
@@ -238,5 +269,30 @@ mod tests {
         let limpio = quitar_query_params(con_otro_param);
         assert!(limpio.contains("sslmode=disable"), "no debe borrar otros parámetros válidos: {}", limpio);
         assert!(!limpio.contains("pgbouncer"), "debe borrar específicamente pgbouncer: {}", limpio);
+    }
+
+    /// Supabase (y cualquier panel de "variables de entorno") muestra el
+    /// connection string como una línea tipo .env: `NOMBRE="valor"`. Si se
+    /// copia la línea entera en vez de solo el valor, tenemos que poder
+    /// rescatar igual el connection string real.
+    #[test]
+    fn tolera_pegar_la_linea_completa_de_env() {
+        let url = "postgresql://postgres.abc:pass@host:5432/postgres";
+
+        assert_eq!(quitar_prefijo_de_env(&format!(r#"DATABASE_URL="{url}""#)), url);
+        assert_eq!(quitar_prefijo_de_env(&format!("DIRECT_URL={url}")), url);
+        assert_eq!(quitar_prefijo_de_env(&format!("DIRECT_URL='{url}'")), url);
+        assert_eq!(quitar_prefijo_de_env(&format!("  {url}  \n")), url);
+        assert_eq!(quitar_prefijo_de_env(url), url, "un connection string normal no debe tocarse");
+
+        // Un connection string normal (sin prefijo) puede tener "=" en los
+        // query params (ej. sslmode=require) y no debe confundirse con un
+        // prefijo de variable.
+        let con_query = "postgresql://postgres:pass@host:5432/postgres?sslmode=require";
+        assert_eq!(quitar_prefijo_de_env(con_query), con_query);
+
+        // Caso real que vimos: la línea completa, con query params y todo.
+        let con_prefijo_y_query = format!(r#"DATABASE_URL="{con_query}""#);
+        assert_eq!(quitar_prefijo_de_env(&con_prefijo_y_query), con_query);
     }
 }
