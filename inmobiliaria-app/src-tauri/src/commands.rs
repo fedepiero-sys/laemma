@@ -117,23 +117,37 @@ async fn proxima_fecha_actualizacion(conn: &Object, contrato_id: i64, fecha_inic
 
 // ---------- Conexión a la base de datos ----------
 
-/// true si ya hay una conexión activa, o si existe una guardada de una
-/// sesión anterior y se pudo restablecer. false si hace falta configurarla
-/// (primera vez que se abre la app en esta PC).
+/// Connection string de fábrica, incluido en el instalador en tiempo de
+/// compilación (variable de entorno INMOBILIARIA_DB_URL en el build de
+/// GitHub Actions). Permite que la app venga lista para usar sin que la
+/// persona que la instala tenga que pegar ningún dato técnico. Si no está
+/// presente (build local de desarrollo), la app pide el connection string
+/// a mano la primera vez, como antes.
+const DB_URL_DE_FABRICA: Option<&str> = option_env!("INMOBILIARIA_DB_URL");
+
+/// true si ya hay una conexión activa, si existe una guardada de una sesión
+/// anterior y se pudo restablecer, o si se pudo conectar con el connection
+/// string de fábrica incluido en el instalador. false solo si hace falta
+/// pedirlo a mano (primera vez en un build sin connection string de fábrica).
 #[tauri::command]
 pub async fn hay_configuracion_conexion(app: tauri::AppHandle, state: State<'_, DbState>) -> Result<bool, String> {
     if state.0.read().await.is_some() {
         return Ok(true);
     }
     let data_dir = app.path().app_data_dir().map_err(map_err)?;
-    match crate::db::leer_connection_string_guardado(&data_dir) {
-        Some(cs) => {
-            let pool = crate::db::conectar(&cs).await?;
-            *state.0.write().await = Some(pool);
-            Ok(true)
-        }
-        None => Ok(false),
+    if let Some(cs) = crate::db::leer_connection_string_guardado(&data_dir) {
+        let pool = crate::db::conectar(&cs).await?;
+        *state.0.write().await = Some(pool);
+        return Ok(true);
     }
+    if let Some(cs) = DB_URL_DE_FABRICA {
+        let pool = crate::db::conectar(cs).await?;
+        std::fs::create_dir_all(&data_dir).map_err(map_err)?;
+        crate::db::guardar_connection_string(&data_dir, cs)?;
+        *state.0.write().await = Some(pool);
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 #[tauri::command]
