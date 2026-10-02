@@ -52,6 +52,11 @@ pub fn run() {
             commands::get_dashboard,
             commands::estimar_actualizacion_icl,
             commands::confirmar_actualizacion_icl,
+            commands::hay_usuarios,
+            commands::get_usuarios,
+            commands::crear_usuario,
+            commands::eliminar_usuario,
+            commands::iniciar_sesion,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

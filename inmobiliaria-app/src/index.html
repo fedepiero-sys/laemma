@@ -22,7 +22,15 @@
         <button class="nav-btn" data-view="contratos">📄 Contratos</button>
         <button class="nav-btn" data-view="ingresos">💰 Ingresos (recibos)</button>
         <button class="nav-btn" data-view="egresos">🏦 Egresos (comisiones)</button>
+        <button class="nav-btn" data-view="usuarios">👤 Usuarios</button>
       </nav>
+      <div class="sidebar-footer">
+        <div class="user-chip">
+          <span class="user-avatar" id="user-avatar">?</span>
+          <span class="user-name" id="user-name">—</span>
+        </div>
+        <button class="btn-logout" id="btn-logout" title="Cerrar sesión">⏻</button>
+      </div>
     </aside>
 
     <main class="content">
@@ -183,7 +191,46 @@
           <tbody id="tbl-liquidaciones"></tbody>
         </table>
       </section>
+
+      <!-- USUARIOS -->
+      <section id="view-usuarios" class="view">
+        <header class="view-header">
+          <h1>Usuarios</h1>
+          <button class="btn-primary" id="btn-nuevo-usuario">+ Nuevo usuario</button>
+        </header>
+        <table class="data-table">
+          <thead><tr><th>Usuario</th><th>Nombre completo</th><th>Estado</th><th></th></tr></thead>
+          <tbody id="tbl-usuarios"></tbody>
+        </table>
+      </section>
     </main>
+  </div>
+
+  <!-- Pantalla de login -->
+  <div id="login-screen" class="login-screen hidden">
+    <div class="login-card">
+      <div class="login-brand">
+        <span class="brand-icon">🏠</span>
+        <h1>Inmobiliaria App</h1>
+      </div>
+      <p class="login-subtitle" id="login-subtitle">Ingresá tu usuario y contraseña</p>
+      <form id="login-form">
+        <div class="form-field" id="login-field-nombre" style="display:none">
+          <label>Nombre completo</label>
+          <input type="text" id="login-nombre" autocomplete="name" />
+        </div>
+        <div class="form-field">
+          <label>Usuario</label>
+          <input type="text" id="login-username" autocomplete="username" required />
+        </div>
+        <div class="form-field">
+          <label>Contraseña</label>
+          <input type="password" id="login-password" autocomplete="current-password" required />
+        </div>
+        <p class="login-error" id="login-error"></p>
+        <button type="submit" class="btn-primary login-submit" id="login-submit">Ingresar</button>
+      </form>
+    </div>
   </div>
 
   <!-- Modal genérico para formularios -->

@@ -1,6 +1,21 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct Usuario {
+    pub id: i64,
+    pub username: String,
+    pub nombre_completo: String,
+    pub activo: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NuevoUsuario {
+    pub username: String,
+    pub password: String,
+    pub nombre_completo: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Propietario {
     pub id: Option<i64>,
     pub nombre: String,

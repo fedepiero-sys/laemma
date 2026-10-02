@@ -1,6 +1,8 @@
 const invoke = window.__TAURI__.core.invoke;
 
 const state = {
+  usuarioActual: null,
+  usuarios: [],
   propietarios: [],
   inquilinos: [],
   garantes: [],
@@ -142,7 +144,8 @@ function openPrint(html) {
 // ---------- carga inicial ----------
 
 async function loadAll() {
-  const [propietarios, inquilinos, garantes, inmuebles, contratos, pagos, liquidaciones] = await Promise.all([
+  const [usuarios, propietarios, inquilinos, garantes, inmuebles, contratos, pagos, liquidaciones] = await Promise.all([
+    call("get_usuarios"),
     call("get_propietarios"),
     call("get_inquilinos"),
     call("get_garantes"),
@@ -151,7 +154,8 @@ async function loadAll() {
     call("get_pagos"),
     call("get_liquidaciones"),
   ]);
-  Object.assign(state, { propietarios, inquilinos, garantes, inmuebles, contratos, pagos, liquidaciones });
+  Object.assign(state, { usuarios, propietarios, inquilinos, garantes, inmuebles, contratos, pagos, liquidaciones });
+  renderUsuarios();
   renderPropietarios();
   renderInquilinos();
   renderGarantes();
@@ -1014,6 +1018,110 @@ document.getElementById("tbl-actualizaciones").addEventListener("click", async (
   }
 });
 
+// ---------- USUARIOS ----------
+
+function renderUsuarios() {
+  const tbody = document.getElementById("tbl-usuarios");
+  if (!state.usuarios.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="4">No hay usuarios</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = state.usuarios
+    .map(
+      (u) => `<tr>
+      <td>${esc(u.username)}</td><td>${esc(u.nombre_completo)}</td>
+      <td><span class="pill ${u.activo ? "pill-activo" : "pill-finalizado"}">${u.activo ? "Activo" : "Deshabilitado"}</span></td>
+      <td class="actions">
+        ${u.id === state.usuarioActual?.id ? "" : `<button class="btn-link" data-action="del-usuario" data-id="${u.id}">Eliminar</button>`}
+      </td></tr>`
+    )
+    .join("");
+}
+
+document.getElementById("btn-nuevo-usuario").addEventListener("click", () => {
+  openModal(
+    "Nuevo usuario",
+    [
+      { name: "nombre_completo", label: "Nombre completo", required: true, full: true },
+      { name: "username", label: "Usuario", required: true, full: true },
+      { name: "password", label: "Contraseña (mínimo 4 caracteres)", type: "password", required: true, full: true },
+    ],
+    {},
+    async (values) => {
+      await call("crear_usuario", { nuevo: values });
+      toast("Usuario creado");
+      await loadAll();
+    }
+  );
+});
+
+document.getElementById("tbl-usuarios").addEventListener("click", async (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  if (btn.dataset.action === "del-usuario") {
+    if (confirm("¿Eliminar este usuario? Ya no va a poder iniciar sesión.")) {
+      await call("eliminar_usuario", { id: Number(btn.dataset.id) });
+      toast("Usuario eliminado");
+      await loadAll();
+    }
+  }
+});
+
+document.getElementById("btn-logout").addEventListener("click", () => {
+  state.usuarioActual = null;
+  document.getElementById("app").classList.add("hidden");
+  mostrarLogin();
+});
+
+// ---------- login ----------
+
+const loginScreen = document.getElementById("login-screen");
+const loginForm = document.getElementById("login-form");
+const loginError = document.getElementById("login-error");
+
+async function mostrarLogin() {
+  loginError.textContent = "";
+  loginForm.reset();
+  const esPrimerUso = !(await call("hay_usuarios"));
+  document.getElementById("login-field-nombre").style.display = esPrimerUso ? "flex" : "none";
+  document.getElementById("login-nombre").required = esPrimerUso;
+  document.getElementById("login-subtitle").textContent = esPrimerUso
+    ? "Todavía no hay usuarios cargados — creá el primero para empezar"
+    : "Ingresá tu usuario y contraseña";
+  document.getElementById("login-submit").textContent = esPrimerUso ? "Crear usuario y entrar" : "Ingresar";
+  loginForm.dataset.modo = esPrimerUso ? "crear" : "login";
+  loginScreen.classList.remove("hidden");
+}
+
+function aplicarUsuarioActual(usuario) {
+  state.usuarioActual = usuario;
+  document.getElementById("user-name").textContent = usuario.nombre_completo;
+  document.getElementById("user-avatar").textContent = usuario.nombre_completo.trim().charAt(0).toUpperCase() || "?";
+}
+
+loginForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  loginError.textContent = "";
+  const username = document.getElementById("login-username").value;
+  const password = document.getElementById("login-password").value;
+  try {
+    let usuario;
+    if (loginForm.dataset.modo === "crear") {
+      const nombre_completo = document.getElementById("login-nombre").value;
+      usuario = await invoke("crear_usuario", { nuevo: { username, password, nombre_completo } });
+    } else {
+      usuario = await invoke("iniciar_sesion", { username, password });
+    }
+    aplicarUsuarioActual(usuario);
+    loginScreen.classList.add("hidden");
+    document.getElementById("app").classList.remove("hidden");
+    await loadAll();
+  } catch (err) {
+    loginError.textContent = typeof err === "string" ? err : "No se pudo iniciar sesión";
+  }
+});
+
 // ---------- arranque ----------
 
-loadAll().catch((e) => console.error(e));
+document.getElementById("app").classList.add("hidden");
+mostrarLogin().catch((e) => console.error(e));

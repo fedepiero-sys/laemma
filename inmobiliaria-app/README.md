@@ -31,6 +31,21 @@ usuario). No requiere instalar ningún motor de base de datos aparte.
   de alquiler pendientes.
 - Los recibos y comprobantes se pueden imprimir o guardar como PDF desde la
   propia aplicación.
+- **Login**: la primera vez que se abre la app pide crear un usuario
+  (nombre, usuario y contraseña); de ahí en adelante pide usuario y
+  contraseña para entrar. Se pueden cargar más usuarios desde la sección
+  "Usuarios" ya logueado. Por ahora las cuentas son locales a cada
+  instalación (ver más abajo si varias personas necesitan compartir los
+  mismos datos).
+
+## Varias personas, varias PCs
+
+Hoy cada instalación guarda su propia base de datos local — si dos personas
+instalan la app en notebooks distintas, cada una ve solo lo que cargó ella.
+Para que compartan los mismos contratos, pagos, etc. desde PCs distintas,
+hace falta migrar la base de datos a un servidor compartido (por ejemplo,
+[Supabase](https://supabase.com)) en lugar de SQLite local. Esa migración
+está en curso — mientras tanto, cada PC funciona de forma independiente.
 
 ## Requisitos para compilar
 

@@ -37,6 +37,14 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
 const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS usuarios (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    username        TEXT NOT NULL UNIQUE,
+    password_hash   TEXT NOT NULL,
+    nombre_completo TEXT NOT NULL,
+    activo          INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE IF NOT EXISTS propietarios (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre            TEXT NOT NULL,

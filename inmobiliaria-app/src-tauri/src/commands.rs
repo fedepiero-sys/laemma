@@ -978,3 +978,96 @@ pub async fn estimar_actualizacion_icl(state: State<'_, DbState>, contrato_id: i
 pub async fn confirmar_actualizacion_icl(state: State<'_, DbState>, contrato_id: i64) -> Result<EstimacionIcl, String> {
     calcular_con_icl(&state.0, contrato_id, false).await
 }
+
+// ---------- Usuarios / login ----------
+
+fn fila_a_usuario(r: &rusqlite::Row) -> rusqlite::Result<Usuario> {
+    Ok(Usuario {
+        id: r.get(0)?,
+        username: r.get(1)?,
+        nombre_completo: r.get(2)?,
+        activo: r.get::<_, i64>(3)? != 0,
+    })
+}
+
+/// true si todavia no se creo ningun usuario (primer arranque de la app).
+#[tauri::command]
+pub fn hay_usuarios(state: State<DbState>) -> Result<bool, String> {
+    let conn = state.0.lock().map_err(map_err)?;
+    let cantidad: i64 = conn
+        .query_row("SELECT COUNT(*) FROM usuarios", [], |r| r.get(0))
+        .map_err(map_err)?;
+    Ok(cantidad > 0)
+}
+
+#[tauri::command]
+pub fn get_usuarios(state: State<DbState>) -> Result<Vec<Usuario>, String> {
+    let conn = state.0.lock().map_err(map_err)?;
+    let mut stmt = conn
+        .prepare("SELECT id, username, nombre_completo, activo FROM usuarios ORDER BY nombre_completo")
+        .map_err(map_err)?;
+    let rows = stmt.query_map([], fila_a_usuario).map_err(map_err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(map_err)
+}
+
+/// Crea un usuario nuevo. Cualquiera puede crear el primero (arranque de la
+/// app, sin login todavia); a partir de ahi la pantalla de "nuevo usuario"
+/// del frontend solo se muestra estando ya logueado.
+#[tauri::command]
+pub fn crear_usuario(state: State<DbState>, nuevo: NuevoUsuario) -> Result<Usuario, String> {
+    if nuevo.username.trim().is_empty() || nuevo.password.len() < 4 {
+        return Err("El usuario no puede estar vacío y la contraseña debe tener al menos 4 caracteres".to_string());
+    }
+    let hash = bcrypt::hash(&nuevo.password, bcrypt::DEFAULT_COST).map_err(map_err)?;
+    let conn = state.0.lock().map_err(map_err)?;
+    conn.execute(
+        "INSERT INTO usuarios (username, password_hash, nombre_completo, activo) VALUES (?1, ?2, ?3, 1)",
+        params![nuevo.username.trim(), hash, nuevo.nombre_completo.trim()],
+    )
+    .map_err(|e| {
+        if e.to_string().contains("UNIQUE") {
+            "Ya existe un usuario con ese nombre de usuario".to_string()
+        } else {
+            map_err(e)
+        }
+    })?;
+    let id = conn.last_insert_rowid();
+    conn.query_row("SELECT id, username, nombre_completo, activo FROM usuarios WHERE id=?1", params![id], |r| {
+        fila_a_usuario(r)
+    })
+    .map_err(map_err)
+}
+
+#[tauri::command]
+pub fn eliminar_usuario(state: State<DbState>, id: i64) -> Result<(), String> {
+    let conn = state.0.lock().map_err(map_err)?;
+    conn.execute("DELETE FROM usuarios WHERE id=?1", params![id]).map_err(map_err)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn iniciar_sesion(state: State<DbState>, username: String, password: String) -> Result<Usuario, String> {
+    let conn = state.0.lock().map_err(map_err)?;
+    let fila: Option<(i64, String, String, String, i64)> = conn
+        .query_row(
+            "SELECT id, username, password_hash, nombre_completo, activo FROM usuarios WHERE username = ?1",
+            params![username.trim()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .optional()
+        .map_err(map_err)?;
+
+    let (id, username, password_hash, nombre_completo, activo) =
+        fila.ok_or_else(|| "Usuario o contraseña incorrectos".to_string())?;
+
+    if activo == 0 {
+        return Err("Este usuario está deshabilitado".to_string());
+    }
+
+    let valido = bcrypt::verify(&password, &password_hash).map_err(map_err)?;
+    if !valido {
+        return Err("Usuario o contraseña incorrectos".to_string());
+    }
+
+    Ok(Usuario { id, username, nombre_completo, activo: true })
+}
