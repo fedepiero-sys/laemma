@@ -4,41 +4,71 @@ use std::path::PathBuf;
 pub fn connect(db_path: &PathBuf) -> Connection {
     let conn = Connection::open(db_path).expect("No se pudo abrir la base de datos");
     conn.execute_batch(SCHEMA).expect("No se pudo inicializar el esquema");
+    migrate(&conn);
     conn
+}
+
+/// Agrega columnas nuevas a bases de datos creadas con un esquema anterior,
+/// sin tocar los datos ya cargados.
+fn migrate(conn: &Connection) {
+    for tabla in ["propietarios", "inquilinos", "garantes"] {
+        if !column_exists(conn, tabla, "fecha_nacimiento") {
+            conn.execute(
+                &format!("ALTER TABLE {} ADD COLUMN fecha_nacimiento TEXT", tabla),
+                [],
+            )
+            .expect("No se pudo migrar el esquema (fecha_nacimiento)");
+        }
+    }
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({})", table))
+        .expect("No se pudo inspeccionar el esquema");
+    let cols: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(1))
+        .expect("No se pudo leer el esquema")
+        .filter_map(|c| c.ok())
+        .collect();
+    cols.iter().any(|c| c == column)
 }
 
 const SCHEMA: &str = r#"
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS propietarios (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre          TEXT NOT NULL,
-    dni_cuit        TEXT,
-    telefono        TEXT,
-    email           TEXT,
-    direccion       TEXT,
-    datos_bancarios TEXT,
-    notas           TEXT
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre            TEXT NOT NULL,
+    dni_cuit          TEXT,
+    fecha_nacimiento  TEXT,
+    telefono          TEXT,
+    email             TEXT,
+    direccion         TEXT,
+    datos_bancarios   TEXT,
+    notas             TEXT
 );
 
 CREATE TABLE IF NOT EXISTS inquilinos (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre    TEXT NOT NULL,
-    dni_cuit  TEXT,
-    telefono  TEXT,
-    email     TEXT,
-    direccion TEXT,
-    notas     TEXT
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre            TEXT NOT NULL,
+    dni_cuit          TEXT,
+    fecha_nacimiento  TEXT,
+    telefono          TEXT,
+    email             TEXT,
+    direccion         TEXT,
+    notas             TEXT
 );
 
 CREATE TABLE IF NOT EXISTS garantes (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    nombre    TEXT NOT NULL,
-    dni_cuit  TEXT,
-    telefono  TEXT,
-    email     TEXT,
-    direccion TEXT,
-    notas     TEXT
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    nombre            TEXT NOT NULL,
+    dni_cuit          TEXT,
+    fecha_nacimiento  TEXT,
+    telefono          TEXT,
+    email             TEXT,
+    direccion         TEXT,
+    notas             TEXT
 );
 
 CREATE TABLE IF NOT EXISTS inmuebles (

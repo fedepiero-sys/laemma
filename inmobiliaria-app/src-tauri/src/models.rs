@@ -5,6 +5,7 @@ pub struct Propietario {
     pub id: Option<i64>,
     pub nombre: String,
     pub dni_cuit: Option<String>,
+    pub fecha_nacimiento: Option<String>,
     pub telefono: Option<String>,
     pub email: Option<String>,
     pub direccion: Option<String>,
@@ -17,6 +18,7 @@ pub struct Inquilino {
     pub id: Option<i64>,
     pub nombre: String,
     pub dni_cuit: Option<String>,
+    pub fecha_nacimiento: Option<String>,
     pub telefono: Option<String>,
     pub email: Option<String>,
     pub direccion: Option<String>,
@@ -28,6 +30,7 @@ pub struct Garante {
     pub id: Option<i64>,
     pub nombre: String,
     pub dni_cuit: Option<String>,
+    pub fecha_nacimiento: Option<String>,
     pub telefono: Option<String>,
     pub email: Option<String>,
     pub direccion: Option<String>,
@@ -196,10 +199,21 @@ pub struct ActualizacionPendiente {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct CumpleanosProximo {
+    pub nombre: String,
+    pub tipo: String,
+    pub fecha_nacimiento: String,
+    pub proximo_cumple: String,
+    pub edad_cumple: i64,
+    pub dias_restantes: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ResumenDashboard {
     pub deudas: Vec<DeudaContrato>,
     pub vencimientos: Vec<VencimientoContrato>,
     pub actualizaciones_pendientes: Vec<ActualizacionPendiente>,
+    pub cumpleanos_proximos: Vec<CumpleanosProximo>,
     pub total_contratos_activos: i64,
     pub total_adeudado: f64,
 }

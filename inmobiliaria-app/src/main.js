@@ -163,6 +163,7 @@ function propietarioFields() {
   return [
     { name: "nombre", label: "Nombre completo", required: true, full: true },
     { name: "dni_cuit", label: "DNI / CUIT" },
+    { name: "fecha_nacimiento", label: "Fecha de nacimiento", type: "date", nullable: true },
     { name: "telefono", label: "Teléfono" },
     { name: "email", label: "Email" },
     { name: "direccion", label: "Dirección", full: true },
@@ -224,6 +225,7 @@ function inquilinoFields() {
   return [
     { name: "nombre", label: "Nombre completo", required: true, full: true },
     { name: "dni_cuit", label: "DNI / CUIT" },
+    { name: "fecha_nacimiento", label: "Fecha de nacimiento", type: "date", nullable: true },
     { name: "telefono", label: "Teléfono" },
     { name: "email", label: "Email" },
     { name: "direccion", label: "Dirección", full: true },
@@ -284,6 +286,7 @@ function garanteFields() {
   return [
     { name: "nombre", label: "Nombre completo", required: true, full: true },
     { name: "dni_cuit", label: "DNI / CUIT" },
+    { name: "fecha_nacimiento", label: "Fecha de nacimiento", type: "date", nullable: true },
     { name: "telefono", label: "Teléfono" },
     { name: "email", label: "Email" },
     { name: "direccion", label: "Dirección", full: true },
@@ -838,7 +841,8 @@ async function verComprobante(liquidacionId) {
 async function renderDashboard() {
   const dias_vencimiento = Number(document.getElementById("dash-dias-venc").value || 60);
   const dias_actualizacion = Number(document.getElementById("dash-dias-act").value || 30);
-  const d = await call("get_dashboard", { diasVencimiento: dias_vencimiento, diasActualizacion: dias_actualizacion });
+  const dias_cumpleanos = Number(document.getElementById("dash-dias-cumple").value || 30);
+  const d = await call("get_dashboard", { diasVencimiento: dias_vencimiento, diasActualizacion: dias_actualizacion, diasCumpleanos: dias_cumpleanos });
 
   document.getElementById("dash-contratos-activos").textContent = d.total_contratos_activos;
   document.getElementById("dash-total-adeudado").textContent = money(d.total_adeudado);
@@ -878,10 +882,23 @@ async function renderDashboard() {
         })
         .join("")
     : `<tr class="empty-row"><td colspan="5">Sin actualizaciones próximas</td></tr>`;
+
+  const tblCumple = document.getElementById("tbl-cumpleanos");
+  tblCumple.innerHTML = d.cumpleanos_proximos.length
+    ? d.cumpleanos_proximos
+        .map((x) => {
+          const pill = x.dias_restantes === 0 ? "pill-warning" : "pill-activo";
+          const txt = x.dias_restantes === 0 ? "¡Es hoy!" : `${x.dias_restantes} días`;
+          return `<tr><td>${esc(x.nombre)}</td><td>${esc(x.tipo)}</td><td>${fmtDate(x.proximo_cumple)}</td>
+          <td>${x.edad_cumple} años</td><td><span class="pill ${pill}">${txt}</span></td></tr>`;
+        })
+        .join("")
+    : `<tr class="empty-row"><td colspan="5">Sin cumpleaños próximos</td></tr>`;
 }
 
 document.getElementById("dash-dias-venc").addEventListener("change", renderDashboard);
 document.getElementById("dash-dias-act").addEventListener("change", renderDashboard);
+document.getElementById("dash-dias-cumple").addEventListener("change", renderDashboard);
 
 // ---------- arranque ----------
 

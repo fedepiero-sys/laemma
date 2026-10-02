@@ -49,6 +49,20 @@ fn periodo_de(date: NaiveDate) -> String {
     format!("{:04}-{:02}", date.year(), date.month())
 }
 
+/// Próxima fecha (hoy o en el futuro) en que la persona cumple años.
+/// 29 de febrero en años no bisiestos se festeja el 28.
+fn proxima_fecha_cumpleanos(nacimiento: NaiveDate, hoy: NaiveDate) -> NaiveDate {
+    let dia = nacimiento.day().min(days_in_month(hoy.year(), nacimiento.month()));
+    let candidato = NaiveDate::from_ymd_opt(hoy.year(), nacimiento.month(), dia).unwrap();
+    if candidato >= hoy {
+        candidato
+    } else {
+        let anio = hoy.year() + 1;
+        let dia = nacimiento.day().min(days_in_month(anio, nacimiento.month()));
+        NaiveDate::from_ymd_opt(anio, nacimiento.month(), dia).unwrap()
+    }
+}
+
 /// Monto de alquiler vigente a una fecha dada, segun la ultima actualizacion registrada.
 fn monto_vigente(conn: &Connection, contrato_id: i64, fecha: NaiveDate) -> rusqlite::Result<f64> {
     let monto_inicial: f64 = conn.query_row(
@@ -88,7 +102,7 @@ fn proxima_fecha_actualizacion(conn: &Connection, contrato_id: i64, fecha_inicio
 pub fn get_propietarios(state: State<DbState>) -> Result<Vec<Propietario>, String> {
     let conn = state.0.lock().map_err(map_err)?;
     let mut stmt = conn
-        .prepare("SELECT id, nombre, dni_cuit, telefono, email, direccion, datos_bancarios, notas FROM propietarios ORDER BY nombre")
+        .prepare("SELECT id, nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, datos_bancarios, notas FROM propietarios ORDER BY nombre")
         .map_err(map_err)?;
     let rows = stmt
         .query_map([], |r| {
@@ -96,11 +110,12 @@ pub fn get_propietarios(state: State<DbState>) -> Result<Vec<Propietario>, Strin
                 id: r.get(0)?,
                 nombre: r.get(1)?,
                 dni_cuit: r.get(2)?,
-                telefono: r.get(3)?,
-                email: r.get(4)?,
-                direccion: r.get(5)?,
-                datos_bancarios: r.get(6)?,
-                notas: r.get(7)?,
+                fecha_nacimiento: r.get(3)?,
+                telefono: r.get(4)?,
+                email: r.get(5)?,
+                direccion: r.get(6)?,
+                datos_bancarios: r.get(7)?,
+                notas: r.get(8)?,
             })
         })
         .map_err(map_err)?;
@@ -113,15 +128,15 @@ pub fn guardar_propietario(state: State<DbState>, propietario: Propietario) -> R
     match propietario.id {
         Some(id) => {
             conn.execute(
-                "UPDATE propietarios SET nombre=?1, dni_cuit=?2, telefono=?3, email=?4, direccion=?5, datos_bancarios=?6, notas=?7 WHERE id=?8",
-                params![propietario.nombre, propietario.dni_cuit, propietario.telefono, propietario.email, propietario.direccion, propietario.datos_bancarios, propietario.notas, id],
+                "UPDATE propietarios SET nombre=?1, dni_cuit=?2, fecha_nacimiento=?3, telefono=?4, email=?5, direccion=?6, datos_bancarios=?7, notas=?8 WHERE id=?9",
+                params![propietario.nombre, propietario.dni_cuit, propietario.fecha_nacimiento, propietario.telefono, propietario.email, propietario.direccion, propietario.datos_bancarios, propietario.notas, id],
             ).map_err(map_err)?;
             Ok(id)
         }
         None => {
             conn.execute(
-                "INSERT INTO propietarios (nombre, dni_cuit, telefono, email, direccion, datos_bancarios, notas) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                params![propietario.nombre, propietario.dni_cuit, propietario.telefono, propietario.email, propietario.direccion, propietario.datos_bancarios, propietario.notas],
+                "INSERT INTO propietarios (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, datos_bancarios, notas) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![propietario.nombre, propietario.dni_cuit, propietario.fecha_nacimiento, propietario.telefono, propietario.email, propietario.direccion, propietario.datos_bancarios, propietario.notas],
             ).map_err(map_err)?;
             Ok(conn.last_insert_rowid())
         }
@@ -141,7 +156,7 @@ pub fn eliminar_propietario(state: State<DbState>, id: i64) -> Result<(), String
 pub fn get_inquilinos(state: State<DbState>) -> Result<Vec<Inquilino>, String> {
     let conn = state.0.lock().map_err(map_err)?;
     let mut stmt = conn
-        .prepare("SELECT id, nombre, dni_cuit, telefono, email, direccion, notas FROM inquilinos ORDER BY nombre")
+        .prepare("SELECT id, nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, notas FROM inquilinos ORDER BY nombre")
         .map_err(map_err)?;
     let rows = stmt
         .query_map([], |r| {
@@ -149,10 +164,11 @@ pub fn get_inquilinos(state: State<DbState>) -> Result<Vec<Inquilino>, String> {
                 id: r.get(0)?,
                 nombre: r.get(1)?,
                 dni_cuit: r.get(2)?,
-                telefono: r.get(3)?,
-                email: r.get(4)?,
-                direccion: r.get(5)?,
-                notas: r.get(6)?,
+                fecha_nacimiento: r.get(3)?,
+                telefono: r.get(4)?,
+                email: r.get(5)?,
+                direccion: r.get(6)?,
+                notas: r.get(7)?,
             })
         })
         .map_err(map_err)?;
@@ -165,15 +181,15 @@ pub fn guardar_inquilino(state: State<DbState>, inquilino: Inquilino) -> Result<
     match inquilino.id {
         Some(id) => {
             conn.execute(
-                "UPDATE inquilinos SET nombre=?1, dni_cuit=?2, telefono=?3, email=?4, direccion=?5, notas=?6 WHERE id=?7",
-                params![inquilino.nombre, inquilino.dni_cuit, inquilino.telefono, inquilino.email, inquilino.direccion, inquilino.notas, id],
+                "UPDATE inquilinos SET nombre=?1, dni_cuit=?2, fecha_nacimiento=?3, telefono=?4, email=?5, direccion=?6, notas=?7 WHERE id=?8",
+                params![inquilino.nombre, inquilino.dni_cuit, inquilino.fecha_nacimiento, inquilino.telefono, inquilino.email, inquilino.direccion, inquilino.notas, id],
             ).map_err(map_err)?;
             Ok(id)
         }
         None => {
             conn.execute(
-                "INSERT INTO inquilinos (nombre, dni_cuit, telefono, email, direccion, notas) VALUES (?1,?2,?3,?4,?5,?6)",
-                params![inquilino.nombre, inquilino.dni_cuit, inquilino.telefono, inquilino.email, inquilino.direccion, inquilino.notas],
+                "INSERT INTO inquilinos (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, notas) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                params![inquilino.nombre, inquilino.dni_cuit, inquilino.fecha_nacimiento, inquilino.telefono, inquilino.email, inquilino.direccion, inquilino.notas],
             ).map_err(map_err)?;
             Ok(conn.last_insert_rowid())
         }
@@ -193,7 +209,7 @@ pub fn eliminar_inquilino(state: State<DbState>, id: i64) -> Result<(), String> 
 pub fn get_garantes(state: State<DbState>) -> Result<Vec<Garante>, String> {
     let conn = state.0.lock().map_err(map_err)?;
     let mut stmt = conn
-        .prepare("SELECT id, nombre, dni_cuit, telefono, email, direccion, notas FROM garantes ORDER BY nombre")
+        .prepare("SELECT id, nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, notas FROM garantes ORDER BY nombre")
         .map_err(map_err)?;
     let rows = stmt
         .query_map([], |r| {
@@ -201,10 +217,11 @@ pub fn get_garantes(state: State<DbState>) -> Result<Vec<Garante>, String> {
                 id: r.get(0)?,
                 nombre: r.get(1)?,
                 dni_cuit: r.get(2)?,
-                telefono: r.get(3)?,
-                email: r.get(4)?,
-                direccion: r.get(5)?,
-                notas: r.get(6)?,
+                fecha_nacimiento: r.get(3)?,
+                telefono: r.get(4)?,
+                email: r.get(5)?,
+                direccion: r.get(6)?,
+                notas: r.get(7)?,
             })
         })
         .map_err(map_err)?;
@@ -217,15 +234,15 @@ pub fn guardar_garante(state: State<DbState>, garante: Garante) -> Result<i64, S
     match garante.id {
         Some(id) => {
             conn.execute(
-                "UPDATE garantes SET nombre=?1, dni_cuit=?2, telefono=?3, email=?4, direccion=?5, notas=?6 WHERE id=?7",
-                params![garante.nombre, garante.dni_cuit, garante.telefono, garante.email, garante.direccion, garante.notas, id],
+                "UPDATE garantes SET nombre=?1, dni_cuit=?2, fecha_nacimiento=?3, telefono=?4, email=?5, direccion=?6, notas=?7 WHERE id=?8",
+                params![garante.nombre, garante.dni_cuit, garante.fecha_nacimiento, garante.telefono, garante.email, garante.direccion, garante.notas, id],
             ).map_err(map_err)?;
             Ok(id)
         }
         None => {
             conn.execute(
-                "INSERT INTO garantes (nombre, dni_cuit, telefono, email, direccion, notas) VALUES (?1,?2,?3,?4,?5,?6)",
-                params![garante.nombre, garante.dni_cuit, garante.telefono, garante.email, garante.direccion, garante.notas],
+                "INSERT INTO garantes (nombre, dni_cuit, fecha_nacimiento, telefono, email, direccion, notas) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                params![garante.nombre, garante.dni_cuit, garante.fecha_nacimiento, garante.telefono, garante.email, garante.direccion, garante.notas],
             ).map_err(map_err)?;
             Ok(conn.last_insert_rowid())
         }
@@ -716,7 +733,7 @@ pub fn get_comprobante(state: State<DbState>, liquidacion_id: i64) -> Result<Com
 // ---------- Tablero de control ----------
 
 #[tauri::command]
-pub fn get_dashboard(state: State<DbState>, dias_vencimiento: i64, dias_actualizacion: i64) -> Result<ResumenDashboard, String> {
+pub fn get_dashboard(state: State<DbState>, dias_vencimiento: i64, dias_actualizacion: i64, dias_cumpleanos: i64) -> Result<ResumenDashboard, String> {
     let conn = state.0.lock().map_err(map_err)?;
     let hoy = today();
 
@@ -837,10 +854,48 @@ pub fn get_dashboard(state: State<DbState>, dias_vencimiento: i64, dias_actualiz
     vencimientos.sort_by_key(|v| v.dias_restantes);
     actualizaciones_pendientes.sort_by_key(|a| a.dias_restantes);
 
+    // --- próximos cumpleaños (propietarios, inquilinos y garantes) ---
+    let mut personas: Vec<(String, &str, String)> = Vec::new();
+    for (tabla, tipo) in [("propietarios", "Propietario"), ("inquilinos", "Inquilino"), ("garantes", "Garante")] {
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT nombre, fecha_nacimiento FROM {} WHERE fecha_nacimiento IS NOT NULL AND fecha_nacimiento != ''",
+                tabla
+            ))
+            .map_err(map_err)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(map_err)?;
+        for fila in rows {
+            let (nombre, fecha_nacimiento) = fila.map_err(map_err)?;
+            personas.push((nombre, tipo, fecha_nacimiento));
+        }
+    }
+
+    let mut cumpleanos_proximos: Vec<CumpleanosProximo> = personas
+        .into_iter()
+        .map(|(nombre, tipo, fecha_nacimiento)| {
+            let nacimiento = parse_date(&fecha_nacimiento);
+            let proximo = proxima_fecha_cumpleanos(nacimiento, hoy);
+            let dias_restantes = (proximo - hoy).num_days();
+            CumpleanosProximo {
+                nombre,
+                tipo: tipo.to_string(),
+                fecha_nacimiento,
+                proximo_cumple: proximo.format("%Y-%m-%d").to_string(),
+                edad_cumple: (proximo.year() - nacimiento.year()) as i64,
+                dias_restantes,
+            }
+        })
+        .filter(|c| c.dias_restantes <= dias_cumpleanos)
+        .collect();
+    cumpleanos_proximos.sort_by_key(|c| c.dias_restantes);
+
     Ok(ResumenDashboard {
         deudas,
         vencimientos,
         actualizaciones_pendientes,
+        cumpleanos_proximos,
         total_contratos_activos: contratos.len() as i64,
         total_adeudado,
     })
