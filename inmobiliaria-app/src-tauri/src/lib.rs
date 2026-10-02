@@ -19,6 +19,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::hay_configuracion_conexion,
             commands::configurar_conexion,
+            commands::obtener_version,
             commands::get_propietarios,
             commands::guardar_propietario,
             commands::eliminar_propietario,

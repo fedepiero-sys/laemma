@@ -14,6 +14,11 @@ fn map_err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+#[tauri::command]
+pub fn obtener_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// Para deserializar la fila devuelta por un INSERT cuando solo hace falta
 /// el id (p.ej. contratos, que trae columnas que no están en el modelo
 /// `Contrato` usado por el frontend, como `garante_ids`).

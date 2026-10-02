@@ -1151,6 +1151,11 @@ loginForm.addEventListener("submit", async (e) => {
 
 async function arrancar() {
   document.getElementById("app").classList.add("hidden");
+  try {
+    document.getElementById("app-version").textContent = `v${await invoke("obtener_version")}`;
+  } catch (err) {
+    console.error(err);
+  }
   let conectado;
   try {
     conectado = await invoke("hay_configuracion_conexion");
