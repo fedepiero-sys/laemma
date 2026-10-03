@@ -1152,7 +1152,11 @@ loginForm.addEventListener("submit", async (e) => {
       usuario = await invoke("iniciar_sesion", { username, password });
     }
     try {
-      await invoke("guardar_credenciales", { username, password });
+      if (document.getElementById("login-recordar").checked) {
+        await invoke("guardar_credenciales", { username, password });
+      } else {
+        await invoke("borrar_credenciales");
+      }
     } catch (err) {
       console.error(err);
     }

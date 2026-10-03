@@ -168,6 +168,7 @@ body {
 .btn-primary, .btn-secondary, .btn-danger, .btn-link {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
   font-size: 13px;
   padding: 9px 16px;
@@ -295,6 +296,17 @@ body {
 .login-brand h1 { font-size: 19px; margin: 0; font-weight: 800; letter-spacing: -0.3px; }
 .login-subtitle { text-align: center; color: var(--text-muted); font-size: 13px; margin: 0 0 22px; }
 #login-form { display: flex; flex-direction: column; gap: 14px; }
+.login-recordar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: normal;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-top: -4px;
+}
+.login-recordar input { width: 15px; height: 15px; accent-color: var(--primary); cursor: pointer; }
 .login-error { color: var(--danger); font-size: 12.5px; margin: -4px 0 0; min-height: 15px; }
 .login-submit { width: 100%; padding: 11px; font-size: 14px; margin-top: 4px; }
 

@@ -19,8 +19,13 @@ pub fn obtener_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// La ventana arranca con resizable=false (tamaño fijo para las pantallas de
+/// conexión/login), así que hay que volver a habilitar el resize antes de
+/// maximizar — si no, en algunas plataformas el pedido de maximizar se
+/// ignora porque la ventana no se puede redimensionar.
 #[tauri::command]
 pub fn maximizar_ventana(window: tauri::Window) -> Result<(), String> {
+    window.set_resizable(true).map_err(map_err)?;
     window.maximize().map_err(map_err)
 }
 
