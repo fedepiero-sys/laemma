@@ -41,7 +41,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE2MkNFQzQ2OEYxNUU2NjMKUldSajVoV1BSdXdzcG9mZE1pQXV6UjFncTlwVXhocjBYS2VYQkI5b3VQSlRvR0pEMnJlVjQvZXYK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIzODBGMEI5MkY4MTM2QkEKUldTNk5vRXZ1ZkNBczhOQjR6MVlnbFhhWHUza0JxRTlmVkZlWHZqRGx1ZlhwZHp3T3JtdDk4ZG4K",
       "endpoints": [
         "https://github.com/fedepiero-sys/laemma/releases/latest/download/latest.json"
       ],
