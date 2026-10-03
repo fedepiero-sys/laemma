@@ -100,6 +100,30 @@ que reinstalar o actualizar la aplicación no los afecta; lo único que queda
 guardado localmente son la URL y la clave de conexión (ver "Varias personas,
 varias PCs").
 
+## Actualización automática
+
+La app se actualiza sola: al abrirse, revisa en silencio si hay una versión
+más nueva publicada en GitHub Releases y, si la hay, la baja, la instala y
+reinicia la app — sin que el usuario tenga que hacer nada ni descargar un
+instalador a mano. Si no hay internet o no hay versión nueva, sigue
+funcionando con la versión que ya tenía instalada.
+
+Para que esto funcione, cada build de CI (`.github/workflows/build-inmobiliaria-windows.yml`)
+compila, firma y publica un GitHub Release con el instalador y un
+`latest.json` usando [`tauri-apps/tauri-action`](https://github.com/tauri-apps/tauri-action).
+Eso requiere dos secrets del repo además de los de Supabase:
+
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+
+(generados una sola vez con `npx tauri signer generate`; la clave pública
+correspondiente ya está en `src-tauri/tauri.conf.json`, bajo `plugins.updater.pubkey`).
+
+Para que el updater detecte una versión nueva, hay que subir el número de
+versión en `src-tauri/tauri.conf.json` y `src-tauri/Cargo.toml` (y lo ideal
+es mantener `package.json` igual) antes de pushear — CI publica un release
+nuevo por cada versión distinta.
+
 ## Desarrollo
 
 ```bash

@@ -19,6 +19,33 @@ pub fn obtener_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Se llama al arrancar la app. Si hay una versión nueva publicada, la baja,
+/// la instala (sin diálogos, silenciosa) y reinicia la app ya actualizada —
+/// Agustín no tiene que hacer nada. Si no hay internet o no hay versión
+/// nueva, sigue todo igual que antes.
+#[tauri::command]
+pub async fn revisar_actualizaciones(app: tauri::AppHandle) -> Result<bool, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let actualizacion = app
+        .updater()
+        .map_err(map_err)?
+        .check()
+        .await
+        .map_err(map_err)?;
+
+    let Some(actualizacion) = actualizacion else {
+        return Ok(false);
+    };
+
+    actualizacion
+        .download_and_install(|_descargado, _total| {}, || {})
+        .await
+        .map_err(map_err)?;
+
+    app.restart();
+}
+
 /// La ventana ya arranca con resizable=true (igual se ve de tamaño fijo
 /// porque decorations=false le saca los bordes para agarrar y redimensionar
 /// a mano). Si acá se llamara a set_resizable(true) recién al maximizar, en

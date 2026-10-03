@@ -1114,7 +1114,7 @@ const loginScreen = document.getElementById("login-screen");
 const loginForm = document.getElementById("login-form");
 const loginError = document.getElementById("login-error");
 
-async function mostrarLogin(usernamePrecargado) {
+async function mostrarLogin(recordadas) {
   loginError.textContent = "";
   loginForm.reset();
   const esPrimerUso = !(await call("hay_usuarios"));
@@ -1125,7 +1125,10 @@ async function mostrarLogin(usernamePrecargado) {
     : "Ingresá tu usuario y contraseña";
   document.getElementById("login-submit").textContent = esPrimerUso ? "Crear usuario y entrar" : "Ingresar";
   loginForm.dataset.modo = esPrimerUso ? "crear" : "login";
-  if (usernamePrecargado) document.getElementById("login-username").value = usernamePrecargado;
+  if (recordadas) {
+    document.getElementById("login-username").value = recordadas.username;
+    document.getElementById("login-password").value = recordadas.password;
+  }
   loginScreen.classList.remove("hidden");
 }
 
@@ -1180,6 +1183,14 @@ loginForm.addEventListener("submit", async (e) => {
 async function arrancar() {
   document.getElementById("app").classList.add("hidden");
   try {
+    // Si hay una versión nueva, se baja, se instala y la app se reinicia sola
+    // acá adentro (no vuelve a devolver el control a este código). Si falla
+    // (sin internet, etc.) seguimos arrancando con la versión actual.
+    await invoke("revisar_actualizaciones");
+  } catch (err) {
+    console.error(err);
+  }
+  try {
     document.getElementById("app-version").textContent = `v${await invoke("obtener_version")}`;
   } catch (err) {
     console.error(err);
@@ -1199,20 +1210,10 @@ async function arrancar() {
     } catch (err) {
       console.error(err);
     }
-    if (recordadas) {
-      try {
-        const usuario = await invoke("iniciar_sesion", { username: recordadas.username, password: recordadas.password });
-        await entrarAlApp(usuario);
-        return;
-      } catch (err) {
-        try {
-          await invoke("borrar_credenciales");
-        } catch (err2) {
-          console.error(err2);
-        }
-      }
-    }
-    await mostrarLogin(recordadas ? recordadas.username : undefined);
+    // Siempre se ve la pantalla de login — si hay credenciales guardadas
+    // vienen precargadas (la contraseña se ve como puntos, es un campo
+    // type="password"), pero hay que apretar "Ingresar" para entrar.
+    await mostrarLogin(recordadas);
   } else {
     conexionScreen.classList.remove("hidden");
   }

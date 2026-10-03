@@ -7,6 +7,9 @@ on:
       - "inmobiliaria-app/**"
       - ".github/workflows/build-inmobiliaria-windows.yml"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -25,17 +28,21 @@ jobs:
       - name: Instalar dependencias del frontend
         run: npm install
 
-      - name: Compilar instalador (.exe / .msi)
+      # Publica un GitHub Release con el instalador firmado + latest.json —
+      # así el updater automático de la app (ver revisar_actualizaciones en
+      # src-tauri/src/commands.rs) tiene de dónde leer la última versión.
+      - name: Compilar y publicar el release (instalador + updater)
+        uses: tauri-apps/tauri-action@v0
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           INMOBILIARIA_SUPABASE_URL: ${{ secrets.INMOBILIARIA_SUPABASE_URL }}
           INMOBILIARIA_SUPABASE_ANON_KEY: ${{ secrets.INMOBILIARIA_SUPABASE_ANON_KEY }}
-        run: npm run tauri build
-
-      - name: Subir instalador como artifact descargable
-        uses: actions/upload-artifact@v4
         with:
-          name: inmobiliaria-app-windows-installer
-          path: |
-            inmobiliaria-app/src-tauri/target/release/bundle/nsis/*.exe
-            inmobiliaria-app/src-tauri/target/release/bundle/msi/*.msi
-          if-no-files-found: error
+          projectPath: inmobiliaria-app
+          tagName: v__VERSION__
+          releaseName: "Gestión Inmobiliaria v__VERSION__"
+          releaseBody: "Instalador para Windows. La app se actualiza sola a partir de esta versión."
+          releaseDraft: false
+          prerelease: false

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Gestión Inmobiliaria",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.inmobiliaria.app",
   "build": {
     "frontendDist": "../src"
@@ -25,12 +25,29 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE2MkNFQzQ2OEYxNUU2NjMKUldSajVoV1BSdXdzcG9mZE1pQXV6UjFncTlwVXhocjBYS2VYQkI5b3VQSlRvR0pEMnJlVjQvZXYK",
+      "endpoints": [
+        "https://github.com/fedepiero-sys/laemma/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
