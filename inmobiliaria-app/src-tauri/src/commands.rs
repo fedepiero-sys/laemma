@@ -1,4 +1,4 @@
-use crate::config::SupabaseConfig;
+use crate::config::{CredencialesGuardadas, SupabaseConfig};
 use crate::icl;
 use crate::models::*;
 use crate::supabase::{Cliente, ErrorSupabase, FOREIGN_KEY_VIOLATION, UNIQUE_VIOLATION};
@@ -17,6 +17,29 @@ fn map_err<E: std::fmt::Display>(e: E) -> String {
 #[tauri::command]
 pub fn obtener_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+#[tauri::command]
+pub fn maximizar_ventana(window: tauri::Window) -> Result<(), String> {
+    window.maximize().map_err(map_err)
+}
+
+#[tauri::command]
+pub fn leer_credenciales_guardadas(app: tauri::AppHandle) -> Result<Option<CredencialesGuardadas>, String> {
+    let data_dir = app.path().app_data_dir().map_err(map_err)?;
+    Ok(crate::config::leer_credenciales_guardadas(&data_dir))
+}
+
+#[tauri::command]
+pub fn guardar_credenciales(app: tauri::AppHandle, username: String, password: String) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(map_err)?;
+    crate::config::guardar_credenciales(&data_dir, &CredencialesGuardadas { username, password })
+}
+
+#[tauri::command]
+pub fn borrar_credenciales(app: tauri::AppHandle) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(map_err)?;
+    crate::config::borrar_credenciales(&data_dir)
 }
 
 /// Para deserializar la fila devuelta por un INSERT cuando solo hace falta

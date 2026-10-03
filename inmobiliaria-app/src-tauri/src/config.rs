@@ -7,8 +7,18 @@ pub struct SupabaseConfig {
     pub anon_key: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredencialesGuardadas {
+    pub username: String,
+    pub password: String,
+}
+
 fn archivo_config(data_dir: &std::path::Path) -> PathBuf {
     data_dir.join("conexion.json")
+}
+
+fn archivo_credenciales(data_dir: &std::path::Path) -> PathBuf {
+    data_dir.join("credenciales.json")
 }
 
 /// Lee la configuración guardada en una instalación anterior, si existe.
@@ -20,6 +30,28 @@ pub fn leer_guardada(data_dir: &std::path::Path) -> Option<SupabaseConfig> {
 pub fn guardar(data_dir: &std::path::Path, config: &SupabaseConfig) -> Result<(), String> {
     let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
     std::fs::write(archivo_config(data_dir), json).map_err(|e| e.to_string())
+}
+
+/// Recordar usuario y contraseña localmente (en esta PC) para no tener que
+/// tipearlos cada vez que se abre la app — pensado para una PC de uso
+/// personal, como la de Agustín.
+pub fn leer_credenciales_guardadas(data_dir: &std::path::Path) -> Option<CredencialesGuardadas> {
+    let contenido = std::fs::read_to_string(archivo_credenciales(data_dir)).ok()?;
+    serde_json::from_str(&contenido).ok()
+}
+
+pub fn guardar_credenciales(data_dir: &std::path::Path, credenciales: &CredencialesGuardadas) -> Result<(), String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(credenciales).map_err(|e| e.to_string())?;
+    std::fs::write(archivo_credenciales(data_dir), json).map_err(|e| e.to_string())
+}
+
+pub fn borrar_credenciales(data_dir: &std::path::Path) -> Result<(), String> {
+    match std::fs::remove_file(archivo_credenciales(data_dir)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// Las páginas de Supabase muestran a veces la URL o la key como una línea de

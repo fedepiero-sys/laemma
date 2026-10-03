@@ -10,11 +10,12 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Gestión Inmobiliaria",
-        "width": 1280,
-        "height": 820,
-        "minWidth": 980,
-        "minHeight": 600
+        "title": " ",
+        "width": 480,
+        "height": 700,
+        "minWidth": 420,
+        "minHeight": 560,
+        "center": true
       }
     ],
     "security": {

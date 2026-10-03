@@ -1105,7 +1105,7 @@ const loginScreen = document.getElementById("login-screen");
 const loginForm = document.getElementById("login-form");
 const loginError = document.getElementById("login-error");
 
-async function mostrarLogin() {
+async function mostrarLogin(usernamePrecargado) {
   loginError.textContent = "";
   loginForm.reset();
   const esPrimerUso = !(await call("hay_usuarios"));
@@ -1116,6 +1116,7 @@ async function mostrarLogin() {
     : "Ingresá tu usuario y contraseña";
   document.getElementById("login-submit").textContent = esPrimerUso ? "Crear usuario y entrar" : "Ingresar";
   loginForm.dataset.modo = esPrimerUso ? "crear" : "login";
+  if (usernamePrecargado) document.getElementById("login-username").value = usernamePrecargado;
   loginScreen.classList.remove("hidden");
 }
 
@@ -1123,6 +1124,18 @@ function aplicarUsuarioActual(usuario) {
   state.usuarioActual = usuario;
   document.getElementById("user-name").textContent = usuario.nombre_completo;
   document.getElementById("user-avatar").textContent = usuario.nombre_completo.trim().charAt(0).toUpperCase() || "?";
+}
+
+async function entrarAlApp(usuario) {
+  aplicarUsuarioActual(usuario);
+  loginScreen.classList.add("hidden");
+  document.getElementById("app").classList.remove("hidden");
+  await loadAll();
+  try {
+    await invoke("maximizar_ventana");
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 loginForm.addEventListener("submit", async (e) => {
@@ -1138,10 +1151,12 @@ loginForm.addEventListener("submit", async (e) => {
     } else {
       usuario = await invoke("iniciar_sesion", { username, password });
     }
-    aplicarUsuarioActual(usuario);
-    loginScreen.classList.add("hidden");
-    document.getElementById("app").classList.remove("hidden");
-    await loadAll();
+    try {
+      await invoke("guardar_credenciales", { username, password });
+    } catch (err) {
+      console.error(err);
+    }
+    await entrarAlApp(usuario);
   } catch (err) {
     loginError.textContent = typeof err === "string" ? err : "No se pudo iniciar sesión";
   }
@@ -1165,7 +1180,26 @@ async function arrancar() {
     return;
   }
   if (conectado) {
-    await mostrarLogin();
+    let recordadas = null;
+    try {
+      recordadas = await invoke("leer_credenciales_guardadas");
+    } catch (err) {
+      console.error(err);
+    }
+    if (recordadas) {
+      try {
+        const usuario = await invoke("iniciar_sesion", { username: recordadas.username, password: recordadas.password });
+        await entrarAlApp(usuario);
+        return;
+      } catch (err) {
+        try {
+          await invoke("borrar_credenciales");
+        } catch (err2) {
+          console.error(err2);
+        }
+      }
+    }
+    await mostrarLogin(recordadas ? recordadas.username : undefined);
   } else {
     conexionScreen.classList.remove("hidden");
   }
