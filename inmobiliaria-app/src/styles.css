@@ -73,6 +73,8 @@ body {
   color: #cfe3fa;
 }
 .brand-icon .icon { width: 20px; height: 20px; }
+.brand-icon img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
+.brand-icon:has(img) { background: transparent; }
 
 #nav { display: flex; flex-direction: column; padding: 8px 12px; gap: 2px; flex: 1; overflow-y: auto; }
 
@@ -289,6 +291,7 @@ body {
 .login-brand { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 6px; }
 .login-brand .brand-icon { width: 54px; height: 54px; background: var(--primary-light); border-radius: 16px; color: var(--primary); }
 .login-brand .brand-icon .icon { width: 26px; height: 26px; }
+.login-brand .brand-icon:has(img) { width: 72px; height: 72px; background: transparent; }
 .login-brand h1 { font-size: 19px; margin: 0; font-weight: 800; letter-spacing: -0.3px; }
 .login-subtitle { text-align: center; color: var(--text-muted); font-size: 13px; margin: 0 0 22px; }
 #login-form { display: flex; flex-direction: column; gap: 14px; }
