@@ -40,7 +40,34 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-#app { display: flex; height: 100vh; }
+/* Barra de título propia: sin decorations nativas de Windows no hay franja
+   blanca ni botones de minimizar/cerrar, así que los reemplazamos acá. */
+.titlebar {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  background: var(--sidebar-bg);
+  -webkit-app-region: drag;
+}
+.titlebar-btn {
+  -webkit-app-region: no-drag;
+  width: 44px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: var(--sidebar-text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.titlebar-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.titlebar-btn-close:hover { background: var(--danger); color: #fff; }
+
+#app { display: flex; height: calc(100vh - 32px); }
 #app.hidden { display: none; }
 
 .sidebar {
@@ -277,7 +304,7 @@ body {
 
 /* Login */
 .login-screen {
-  position: fixed; inset: 0; z-index: 300;
+  position: fixed; top: 32px; left: 0; right: 0; bottom: 0; z-index: 300;
   display: flex; align-items: center; justify-content: center;
   background: radial-gradient(circle at 20% 20%, #1a3a60 0%, #0c1a2e 55%, #060d18 100%);
 }

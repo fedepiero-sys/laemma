@@ -21,6 +21,8 @@ pub fn run() {
             commands::configurar_conexion,
             commands::obtener_version,
             commands::maximizar_ventana,
+            commands::minimizar_ventana,
+            commands::cerrar_ventana,
             commands::leer_credenciales_guardadas,
             commands::guardar_credenciales,
             commands::borrar_credenciales,

@@ -13,8 +13,9 @@
         "title": " ",
         "width": 760,
         "height": 600,
-        "resizable": false,
-        "center": true
+        "resizable": true,
+        "center": true,
+        "decorations": false
       }
     ],
     "security": {

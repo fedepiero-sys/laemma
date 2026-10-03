@@ -1,5 +1,14 @@
 const invoke = window.__TAURI__.core.invoke;
 
+// ---------- barra de título propia (sin la nativa de Windows) ----------
+
+document.getElementById("titlebar-minimize").addEventListener("click", () => {
+  invoke("minimizar_ventana").catch((err) => console.error(err));
+});
+document.getElementById("titlebar-close").addEventListener("click", () => {
+  invoke("cerrar_ventana").catch((err) => console.error(err));
+});
+
 const state = {
   usuarioActual: null,
   usuarios: [],

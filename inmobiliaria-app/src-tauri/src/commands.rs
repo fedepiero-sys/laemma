@@ -19,14 +19,29 @@ pub fn obtener_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// La ventana arranca con resizable=false (tamaño fijo para las pantallas de
-/// conexión/login), así que hay que volver a habilitar el resize antes de
-/// maximizar — si no, en algunas plataformas el pedido de maximizar se
-/// ignora porque la ventana no se puede redimensionar.
+/// La ventana ya arranca con resizable=true (igual se ve de tamaño fijo
+/// porque decorations=false le saca los bordes para agarrar y redimensionar
+/// a mano). Si acá se llamara a set_resizable(true) recién al maximizar, en
+/// algunos entornos Linux el gestor de ventanas vuelve a dibujar la barra de
+/// título nativa en ese momento — por eso resizable se deja fijo desde el
+/// arranque y maximizar_ventana sólo pide maximizar.
 #[tauri::command]
 pub fn maximizar_ventana(window: tauri::Window) -> Result<(), String> {
-    window.set_resizable(true).map_err(map_err)?;
     window.maximize().map_err(map_err)
+}
+
+/// Sin la barra de título nativa de Windows (decorations=false, para sacar
+/// la franja blanca de arriba) la ventana no tiene botones de minimizar ni
+/// cerrar — hacen falta estos dos comandos para que la barra propia de la
+/// app pueda ofrecerlos.
+#[tauri::command]
+pub fn minimizar_ventana(window: tauri::Window) -> Result<(), String> {
+    window.minimize().map_err(map_err)
+}
+
+#[tauri::command]
+pub fn cerrar_ventana(window: tauri::Window) -> Result<(), String> {
+    window.close().map_err(map_err)
 }
 
 #[tauri::command]
